@@ -12,14 +12,25 @@
     "test": "hardhat test && next build"
   },
   "dependencies": {
+    "@dynamic-labs/ethereum": "^4.57.0",
+    "@dynamic-labs/ethereum-aa": "^4.57.0",
+    "@dynamic-labs/sdk-react-core": "^4.57.0",
+    "@nillion/nilai-ts": "^0.2.0",
+    "@nillion/nuc": "^2.0.0",
+    "@nillion/secretvaults": "^2.0.0",
+    "@stripe/react-stripe-js": "^5.4.1",
+    "@stripe/stripe-js": "^8.6.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "ethers": "^6.16.0",
     "lucide-react": "^0.562.0",
     "next": "^15.1.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "stripe": "^20.2.0",
     "tailwind-merge": "^3.4.0",
-    "tailwindcss-animate": "^1.0.7"
+    "tailwindcss-animate": "^1.0.7",
+    "viem": "^2.44.4"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
