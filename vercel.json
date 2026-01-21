@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/monitor-payments",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/check-expiration",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}
