@@ -3,9 +3,9 @@
 const steps = [
   {
     number: 1,
-    title: "Connect & Join",
+    title: "Sign Up & Join",
     description:
-      "Connect your wallet and pay a 10% deposit to join the waiting list. You'll be added to the current batch.",
+      "Create your account and pay a 10% deposit to join the waiting list. You'll be added to the current batch.",
     icon: (
       <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path

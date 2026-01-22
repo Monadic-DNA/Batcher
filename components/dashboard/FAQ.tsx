@@ -29,9 +29,9 @@ const faqs: FAQItem[] = [
       "After your batch fills and everyone pays: 1-2 weeks for kit delivery, 2-4 weeks for lab sequencing, then results are immediately available for download. You have 60 days to claim your results.",
   },
   {
-    question: "Can I pay with credit card or only crypto?",
+    question: "How can I pay?",
     answer:
-      "Both! You can pay with a credit/debit card via Stripe, or pay on-chain with cryptocurrency (ETH, USDC). The choice is yours.",
+      "You can pay with any major credit or debit card. For advanced users, we also support paying with Ethereum or stablecoins like USDC.",
   },
   {
     question: "What DNA data do I receive?",
@@ -116,10 +116,9 @@ export function FAQ() {
         <p className="text-sm text-blue-900">
           <span className="font-medium">Need more help?</span> Check out our{" "}
           <a href="#" className="text-blue-600 hover:text-blue-700 underline">
-            technical documentation
+            help center
           </a>{" "}
-          for detailed information about the nilDB architecture and privacy
-          guarantees.
+          for detailed information about our privacy protections and how the system works.
         </p>
       </div>
     </div>

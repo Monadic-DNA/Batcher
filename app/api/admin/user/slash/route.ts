@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ethers } from "ethers";
-import { slashUser } from "@/lib/contract";
+import { slashUser, getProvider } from "@/lib/contract";
 import { withRateLimit, RateLimitPresets } from "@/lib/middleware/rateLimit";
 import { withAdminAuth } from "@/lib/middleware/adminAuth";
 
@@ -33,9 +33,8 @@ async function handlePOST(request: NextRequest) {
 
     const batchIdNum = parseInt(batchId);
 
-    // Create signer from private key
-    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    // Create signer from private key (uses Alchemy if configured)
+    const provider = getProvider();
     const signer = new ethers.Wallet(privateKey, provider);
 
     // Slash user

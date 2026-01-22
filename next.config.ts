@@ -20,6 +20,12 @@ const nextConfig: NextConfig = {
       crypto: false,
     };
 
+    // Ignore React Native dependencies in MetaMask SDK
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      '@react-native-async-storage/async-storage': false,
+    };
+
     return config;
   },
 

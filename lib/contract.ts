@@ -57,6 +57,36 @@ export interface UserBatchInfo {
 }
 
 /**
+ * Get RPC URL with Alchemy support
+ */
+function getRpcUrl(): string {
+  const alchemyKey = process.env.ALCHEMY_API_KEY;
+  const explicitRpcUrl = process.env.NEXT_PUBLIC_RPC_URL;
+
+  // If Alchemy API key is set, use it to construct the URL
+  if (alchemyKey) {
+    // Determine network from chain ID or default to Sepolia
+    const chainId = process.env.NEXT_PUBLIC_CHAIN_ID;
+
+    // Map chain IDs to Alchemy network names
+    const networkMap: Record<string, string> = {
+      "1": "eth-mainnet",
+      "11155111": "eth-sepolia",
+      "42161": "arb-mainnet",
+      "421614": "arb-sepolia",
+      "8453": "base-mainnet",
+      "84532": "base-sepolia",
+    };
+
+    const network = chainId ? networkMap[chainId] || "eth-sepolia" : "eth-sepolia";
+    return `https://${network}.g.alchemy.com/v2/${alchemyKey}`;
+  }
+
+  // Fall back to explicit RPC URL or localhost
+  return explicitRpcUrl || "http://localhost:8545";
+}
+
+/**
  * Get a read-only contract instance (for queries)
  */
 export function getContract(providerOrSigner?: ethers.Provider | ethers.Signer) {
@@ -66,8 +96,8 @@ export function getContract(providerOrSigner?: ethers.Provider | ethers.Signer) 
   }
 
   if (!providerOrSigner) {
-    // Use default provider
-    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
+    // Use Alchemy or default provider
+    const rpcUrl = getRpcUrl();
     providerOrSigner = new ethers.JsonRpcProvider(rpcUrl);
   }
 
@@ -83,6 +113,14 @@ export function getContract(providerOrSigner?: ethers.Provider | ethers.Signer) 
  */
 export function getContractWithSigner(signer: ethers.Signer) {
   return getContract(signer);
+}
+
+/**
+ * Get a provider instance (uses Alchemy if configured)
+ */
+export function getProvider(): ethers.JsonRpcProvider {
+  const rpcUrl = getRpcUrl();
+  return new ethers.JsonRpcProvider(rpcUrl);
 }
 
 /**

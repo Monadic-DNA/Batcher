@@ -7,20 +7,18 @@ export function middleware(request: NextRequest) {
   // Security Headers
 
   // Content Security Policy (CSP)
-  // Restrict sources of content to prevent XSS attacks
+  // Relaxed policy - balancing security with third-party SDK requirements
   const cspHeader = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdn.dynamic.xyz https://app.dynamic.xyz",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com",
+    "script-src 'self' 'unsafe-eval' 'unsafe-inline' https:",
+    "style-src 'self' 'unsafe-inline' https:",
+    "font-src 'self' data: https:",
     "img-src 'self' data: https:",
-    "connect-src 'self' https://*.dynamic.xyz https://*.nillion.network https://api.stripe.com wss://*.dynamic.xyz",
-    "frame-src 'self' https://js.stripe.com",
+    "connect-src 'self' https: wss:",
+    "frame-src 'self' https:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
-    "upgrade-insecure-requests",
   ].join("; ");
 
   response.headers.set("Content-Security-Policy", cspHeader);
@@ -40,7 +38,7 @@ export function middleware(request: NextRequest) {
   // Permissions Policy - restrict browser features
   response.headers.set(
     "Permissions-Policy",
-    "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+    "camera=(), microphone=(), geolocation=()"
   );
 
   // Strict Transport Security - force HTTPS
@@ -53,9 +51,9 @@ export function middleware(request: NextRequest) {
   }
 
   // Cross-Origin policies
-  response.headers.set("Cross-Origin-Opener-Policy", "same-origin");
-  response.headers.set("Cross-Origin-Resource-Policy", "same-origin");
-  response.headers.set("Cross-Origin-Embedder-Policy", "require-corp");
+  // Note: COEP require-corp is too strict for third-party resources
+  response.headers.set("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
+  response.headers.set("Cross-Origin-Resource-Policy", "cross-origin");
 
   return response;
 }

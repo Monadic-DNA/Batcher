@@ -213,8 +213,8 @@ export function KitRegistrationModal({
           {/* Security Notice */}
           <div className="bg-gray-50 rounded-lg p-4">
             <p className="text-xs text-gray-600">
-              <strong>How it works:</strong> We create a cryptographic hash of your Kit
-              ID + PIN and store it on-chain. When results are ready, you&apos;ll use
+              <strong>How it works:</strong> We create a secure fingerprint of your Kit
+              ID + PIN and store it safely. When results are ready, you&apos;ll use
               this same PIN to decrypt your data. The PIN itself is never stored or
               transmitted.
             </p>

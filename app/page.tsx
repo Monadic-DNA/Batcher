@@ -68,7 +68,7 @@ export default function Home() {
                 Monadic DNA Batcher
               </h1>
               <p className="text-sm text-gray-600 mt-1">
-                Privacy-preserving DNA testing coordination
+                Private DNA testing with shared pricing
               </p>
             </div>
             <AuthButton />
@@ -148,7 +148,7 @@ export default function Home() {
             {/* User Info */}
             <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                Connected Wallet
+                Your Account
               </h3>
               <div className="flex items-center justify-between bg-gray-50 rounded-lg p-4">
                 <div className="flex items-center space-x-3">
@@ -168,7 +168,7 @@ export default function Home() {
                     </svg>
                   </div>
                   <div>
-                    <p className="text-sm text-gray-600">Wallet Address</p>
+                    <p className="text-sm text-gray-600">Account ID</p>
                     <p className="font-mono text-sm font-medium">
                       {walletAddress?.substring(0, 8)}...
                       {walletAddress?.substring(34)}
@@ -193,13 +193,13 @@ export default function Home() {
                 d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
               />
             </svg>
-            <h3 className="text-2xl font-bold mb-2">Connect to Get Started</h3>
+            <h3 className="text-2xl font-bold mb-2">Sign In to Get Started</h3>
             <p className="text-blue-100 mb-6 max-w-xl mx-auto">
-              Connect your wallet to join a batch, track your progress, and access
+              Create your account to join a batch, track your progress, and access
               your encrypted DNA results
             </p>
             <p className="text-sm text-blue-200">
-              Powered by Dynamic.xyz • Secure wallet authentication
+              Secure authentication powered by Dynamic
             </p>
           </div>
         )}
@@ -229,8 +229,8 @@ export default function Home() {
             </div>
             <h4 className="font-semibold text-lg mb-2">Privacy First</h4>
             <p className="text-sm text-gray-600">
-              Your data is encrypted and stored in Nillion&apos;s privacy-preserving
-              database. Only you can decrypt it with your PIN.
+              Your data is encrypted and stored securely using Nillion&apos;s privacy technology.
+              Only you can decrypt it with your PIN.
             </p>
           </div>
 
@@ -250,7 +250,7 @@ export default function Home() {
                 />
               </svg>
             </div>
-            <h4 className="font-semibold text-lg mb-2">Smart Contracts</h4>
+            <h4 className="font-semibold text-lg mb-2">Fair Coordination</h4>
             <p className="text-sm text-gray-600">
               Automated batch coordination with built-in fairness guarantees and
               transparent state management.
@@ -275,7 +275,7 @@ export default function Home() {
             </div>
             <h4 className="font-semibold text-lg mb-2">Flexible Payments</h4>
             <p className="text-sm text-gray-600">
-              Pay with crypto (on-chain) or credit card (Stripe). Split payments:
+              Pay with your credit card or preferred digital payment method. Split payments:
               10% deposit + 90% balance.
             </p>
           </div>
@@ -294,7 +294,7 @@ export default function Home() {
               reserved.
             </p>
             <p className="mt-2">
-              Built with privacy by design • Powered by Nillion & Dynamic.xyz
+              Built with privacy by design • Powered by Nillion
             </p>
           </div>
         </div>

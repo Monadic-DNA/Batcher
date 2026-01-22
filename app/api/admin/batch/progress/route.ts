@@ -7,6 +7,7 @@ import {
   completeBatch,
   purgeBatch,
   getBatchState,
+  getProvider,
   BatchState,
 } from "@/lib/contract";
 import { withRateLimit, RateLimitPresets } from "@/lib/middleware/rateLimit";
@@ -37,9 +38,8 @@ async function handlePOST(request: NextRequest) {
     // Get current state
     const currentState = await getBatchState(batchIdNum);
 
-    // Create signer from private key
-    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    // Create signer from private key (uses Alchemy if configured)
+    const provider = getProvider();
     const signer = new ethers.Wallet(privateKey, provider);
 
     // Progress to next state

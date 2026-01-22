@@ -157,16 +157,16 @@ export function JoinQueueModal({
             <div className="space-y-3">
               <h3 className="font-semibold text-gray-900">Choose Payment Method</h3>
               <button
-                onClick={() => setPaymentMethod("crypto")}
+                onClick={() => setPaymentMethod("card")}
                 className="w-full flex items-center justify-between p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-all"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                    <Wallet className="w-5 h-5 text-blue-600" />
+                    <CreditCard className="w-5 h-5 text-blue-600" />
                   </div>
                   <div className="text-left">
-                    <p className="font-medium text-gray-900">Crypto (On-Chain)</p>
-                    <p className="text-xs text-gray-500">Pay with ETH or stablecoins</p>
+                    <p className="font-medium text-gray-900">Credit/Debit Card</p>
+                    <p className="text-xs text-gray-500">Fast and secure payment</p>
                   </div>
                 </div>
                 <svg
@@ -185,16 +185,16 @@ export function JoinQueueModal({
               </button>
 
               <button
-                onClick={() => setPaymentMethod("card")}
+                onClick={() => setPaymentMethod("crypto")}
                 className="w-full flex items-center justify-between p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-all"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                    <CreditCard className="w-5 h-5 text-green-600" />
+                    <Wallet className="w-5 h-5 text-green-600" />
                   </div>
                   <div className="text-left">
-                    <p className="font-medium text-gray-900">Credit/Debit Card</p>
-                    <p className="text-xs text-gray-500">Pay with Stripe (USD)</p>
+                    <p className="font-medium text-gray-900">Ethereum / USDC</p>
+                    <p className="text-xs text-gray-500">For advanced users</p>
                   </div>
                 </div>
                 <svg
@@ -221,12 +221,12 @@ export function JoinQueueModal({
                 <span className="text-sm text-gray-600">Payment Method</span>
                 <div className="flex items-center gap-2">
                   {paymentMethod === "crypto" ? (
-                    <Wallet className="w-4 h-4 text-blue-600" />
+                    <Wallet className="w-4 h-4 text-green-600" />
                   ) : (
-                    <CreditCard className="w-4 h-4 text-green-600" />
+                    <CreditCard className="w-4 h-4 text-blue-600" />
                   )}
                   <span className="font-medium">
-                    {paymentMethod === "crypto" ? "Crypto" : "Card"}
+                    {paymentMethod === "crypto" ? "Ethereum/USDC" : "Card"}
                   </span>
                 </div>
               </div>
