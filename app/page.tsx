@@ -92,13 +92,27 @@ export default function Home() {
       <header className="bg-white shadow-sm sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
-                Monadic DNA Batcher
-              </h1>
-              <p className="text-sm text-gray-600 mt-1">
-                Private DNA testing with shared pricing
-              </p>
+            <div className="flex items-center gap-3">
+              <a
+                href="https://monadicdna.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center"
+              >
+                <img
+                  src="/monadicdna-logo.png"
+                  alt="Monadic DNA"
+                  className="h-10 sm:h-12 w-auto"
+                />
+              </a>
+              <div className="border-l-2 border-gray-300 pl-3">
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
+                  Batcher
+                </h1>
+                <p className="text-xs sm:text-sm text-gray-600">
+                  Sequence your DNA privately and anonymously
+                </p>
+              </div>
             </div>
             <AuthButton />
           </div>
@@ -107,85 +121,219 @@ export default function Home() {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Marketing Section - Show to everyone */}
-        <div className="mb-8">
-          <HowItWorks />
-        </div>
-
-        {/* Live Queue Stats - Always visible */}
-        {currentBatchId && currentBatchInfo && (
-          <LiveQueueStats
-            currentCount={currentBatchInfo.participantCount}
-            maxSize={MAX_BATCH_SIZE}
-            batchId={currentBatchId}
-            recentJoins={[]} // TODO: Can be fetched from events or API
-          />
-        )}
-
-        {/* Authenticated User Content */}
-        {isAuthenticated ? (
-          <>
-            {/* User Status Card */}
-            {batchInfo && batchInfo.joined ? (
-              <UserStatusCard
-                batchId={batchInfo.batchId}
-                batchState={batchInfo.batchState}
-                depositPaid={batchInfo.depositPaid}
-                balancePaid={batchInfo.balancePaid}
-                paymentDeadline={
-                  batchInfo.batchState === "Active"
-                    ? new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
-                    : undefined
-                }
-                kitRegistered={false}
-                resultsAvailable={false}
-                onPayBalance={() => setIsBalancePaymentModalOpen(true)}
-                onRegisterKit={() => setIsKitRegistrationModalOpen(true)}
-                onDownloadResults={() => setIsDataRevealModalOpen(true)}
-              />
-            ) : (
-              <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-                <div className="text-center py-8">
-                  <svg
-                    className="mx-auto h-12 w-12 text-gray-400 mb-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
+        {/* Above the Fold - 3 Column Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          {/* Column 1: Current Batch Info */}
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Current Batch</h2>
+              <button
+                onClick={() => {
+                  const batchHistorySection = document.getElementById('batch-history-section');
+                  batchHistorySection?.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+              >
+                View History →
+              </button>
+            </div>
+            {currentBatchId && currentBatchInfo ? (
+              <>
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-gray-600">Batch #{currentBatchId}</span>
+                    <span className="font-bold text-blue-600">
+                      {currentBatchInfo.participantCount}/{MAX_BATCH_SIZE}
+                    </span>
+                  </div>
+                  <div className="w-full bg-blue-200 rounded-full h-3">
+                    <div
+                      className="bg-blue-600 h-3 rounded-full transition-all"
+                      style={{
+                        width: `${(currentBatchInfo.participantCount / MAX_BATCH_SIZE) * 100}%`,
+                      }}
                     />
-                  </svg>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
-                    Not in a batch yet
-                  </h3>
-                  <p className="text-gray-600 mb-6">
-                    Join the current batch to get started with your DNA testing
-                    journey
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    State: {["Pending", "Staged", "Active", "Sequencing", "Completed", "Purged"][currentBatchInfo.state]}
                   </p>
+                </div>
+
+                {/* Participant List */}
+                <div className="mb-4">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-2">
+                    Participants ({currentBatchInfo.participantCount})
+                  </h3>
+                  <div className="bg-gray-50 rounded-lg p-3 max-h-48 overflow-y-auto">
+                    {currentBatchInfo.participantCount > 0 ? (
+                      <div className="space-y-1 text-xs font-mono text-gray-600">
+                        {/* TODO: Fetch actual participant addresses from events or API */}
+                        <p className="text-gray-400 italic">
+                          Participant addresses will appear here
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 italic">No participants yet</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Batch Navigation */}
+                <div className="flex gap-2">
                   <button
-                    onClick={() => setIsJoinModalOpen(true)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-8 py-3 rounded-lg transition-colors"
+                    onClick={() => {
+                      if (currentBatchId > 1) {
+                        // TODO: Navigate to previous batch
+                        console.log("Previous batch");
+                      }
+                    }}
+                    disabled={currentBatchId <= 1}
+                    className="flex-1 px-3 py-2 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-medium text-gray-700"
                   >
-                    Join Current Batch
+                    ← Previous
+                  </button>
+                  <button
+                    onClick={() => {
+                      // TODO: Navigate to next batch (if exists)
+                      console.log("Next batch");
+                    }}
+                    className="flex-1 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm font-medium text-gray-700"
+                  >
+                    Next →
                   </button>
                 </div>
+              </>
+            ) : (
+              <div className="text-center py-8 text-gray-400">
+                <p>Loading batch info...</p>
               </div>
             )}
+          </div>
 
-            {/* User Info */}
-            <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                Your Account
-              </h3>
-              <div className="flex items-center justify-between bg-gray-50 rounded-lg p-4">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center">
+          {/* Column 2: How It Works */}
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">How It Works</h2>
+            <div className="space-y-4">
+              <div className="flex gap-3">
+                <div className="flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold text-sm">
+                  1
+                </div>
+                <div>
+                  <h3 className="font-semibold text-sm text-gray-900">Join & Deposit</h3>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Pay 10% deposit to join the current batch
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold text-sm">
+                  2
+                </div>
+                <div>
+                  <h3 className="font-semibold text-sm text-gray-900">Wait for Batch</h3>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Batch activates when 24 participants join
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold text-sm">
+                  3
+                </div>
+                <div>
+                  <h3 className="font-semibold text-sm text-gray-900">Pay Balance</h3>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Complete payment (90%) within 7 days
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold text-sm">
+                  4
+                </div>
+                <div>
+                  <h3 className="font-semibold text-sm text-gray-900">Register Kit</h3>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Receive kit, register with secure PIN
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold text-sm">
+                  5
+                </div>
+                <div>
+                  <h3 className="font-semibold text-sm text-gray-900">Lab Processing</h3>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Send sample, lab processes batch (2-4 weeks)
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold text-sm">
+                  6
+                </div>
+                <div>
+                  <h3 className="font-semibold text-sm text-gray-900">Get Results</h3>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Download encrypted DNA data with PIN
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-gray-200">
+              <div className="flex items-center justify-between text-xs text-gray-500">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  <span>Privacy-first • Encrypted</span>
+                </div>
+                <button
+                  onClick={() => {
+                    const faqSection = document.getElementById('faq-section');
+                    faqSection?.scrollIntoView({ behavior: 'smooth' });
+                  }}
+                  className="text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  Learn more →
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Column 3: User-Specific Actions */}
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">Your Actions</h2>
+            {isAuthenticated ? (
+              <>
+                {batchInfo && batchInfo.joined ? (
+                  <UserStatusCard
+                    batchId={batchInfo.batchId}
+                    batchState={batchInfo.batchState}
+                    depositPaid={batchInfo.depositPaid}
+                    balancePaid={batchInfo.balancePaid}
+                    paymentDeadline={
+                      batchInfo.batchState === "Active"
+                        ? new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
+                        : undefined
+                    }
+                    kitRegistered={false}
+                    resultsAvailable={false}
+                    onPayBalance={() => setIsBalancePaymentModalOpen(true)}
+                    onRegisterKit={() => setIsKitRegistrationModalOpen(true)}
+                    onDownloadResults={() => setIsDataRevealModalOpen(true)}
+                  />
+                ) : (
+                  <div className="text-center py-8">
                     <svg
-                      className="w-6 h-6 text-white"
+                      className="mx-auto h-12 w-12 text-gray-400 mb-4"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -194,57 +342,88 @@ export default function Home() {
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         strokeWidth={2}
-                        d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"
+                        d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
                       />
                     </svg>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Account ID</p>
-                    <p className="font-mono text-sm font-medium">
-                      {walletAddress?.substring(0, 8)}...
-                      {walletAddress?.substring(34)}
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">
+                      Not in a batch yet
+                    </h3>
+                    <p className="text-gray-600 mb-6 text-sm">
+                      Join the current batch to get started
                     </p>
+                    <button
+                      onClick={() => setIsJoinModalOpen(true)}
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2 rounded-lg transition-colors w-full"
+                    >
+                      Join Current Batch
+                    </button>
+                  </div>
+                )}
+
+                {/* User Wallet Info */}
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
+                      <svg
+                        className="w-4 h-4 text-white"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"
+                        />
+                      </svg>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-600">Your Wallet</p>
+                      <p className="font-mono text-xs font-medium truncate">
+                        {walletAddress?.substring(0, 8)}...{walletAddress?.substring(38)}
+                      </p>
+                    </div>
                   </div>
                 </div>
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <svg
+                  className="mx-auto h-12 w-12 text-blue-600 mb-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                  />
+                </svg>
+                <h3 className="text-lg font-bold mb-2">Sign In to Join</h3>
+                <p className="text-gray-600 text-sm">
+                  Secure authentication powered by Dynamic
+                </p>
               </div>
-            </div>
-          </>
-        ) : (
-          <div className="bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg shadow-lg p-8 mb-6 text-white text-center">
-            <svg
-              className="mx-auto h-16 w-16 mb-4 opacity-90"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-              />
-            </svg>
-            <h3 className="text-2xl font-bold mb-2">Sign In to Get Started</h3>
-            <p className="text-blue-100 mb-6 max-w-xl mx-auto">
-              Create your account to join a batch, track your progress, and access
-              your encrypted DNA results
-            </p>
-            <p className="text-sm text-blue-200">
-              Secure authentication powered by Dynamic
-            </p>
+            )}
           </div>
-        )}
+        </div>
 
-        {/* Global Batch History */}
-        <div className="mb-8">
-          <BatchHistory
-            batches={[]} // TODO: Fetch historical batches from events or API
-            loading={loadingContractData}
+        {/* Floating Logo */}
+        <div className="fixed bottom-4 right-4 sm:bottom-8 sm:right-8 z-20">
+          <img
+            src="/batcher.png"
+            alt="Monadic DNA Batcher"
+            className="h-32 sm:h-48 lg:h-96 w-auto object-contain drop-shadow-2xl"
           />
         </div>
 
-        {/* Feature Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+        {/* Below the Fold */}
+        <div className="space-y-8 mt-8">
+          {/* Feature Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           <div className="bg-white rounded-lg shadow-lg p-6">
             <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
               <svg
@@ -313,10 +492,21 @@ export default function Home() {
               10% deposit + 90% balance.
             </p>
           </div>
-        </div>
+          </div>
 
-        {/* FAQ Section */}
-        <FAQ />
+          {/* Global Batch History */}
+          <div id="batch-history-section">
+            <BatchHistory
+              batches={[]} // TODO: Fetch historical batches from events or API
+              loading={loadingContractData}
+            />
+          </div>
+
+          {/* FAQ Section */}
+          <div id="faq-section">
+            <FAQ />
+          </div>
+        </div>
       </div>
 
       {/* Footer */}
@@ -324,7 +514,7 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center text-sm text-gray-500">
             <p>
-              &copy; 2025 Monadic DNA Batcher by Recherché Inc. All rights
+              &copy; {new Date().getFullYear()} Monadic DNA Batcher by Recherché Inc. All rights
               reserved.
             </p>
             <p className="mt-2">

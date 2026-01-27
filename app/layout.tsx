@@ -4,7 +4,7 @@ import { AuthProvider } from "@/components/AuthProvider";
 
 export const metadata: Metadata = {
   title: "Monadic DNA Batcher",
-  description: "Privacy-preserving DNA testing batch coordination system",
+  description: "Private, anonymous DNA Sequencing",
   keywords: [
     "DNA testing",
     "genetic sequencing",
@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "Recherché Inc" }],
   icons: {
-    icon: "/favicon.ico",
+    icon: "/batcher.png",
   },
 };
 
