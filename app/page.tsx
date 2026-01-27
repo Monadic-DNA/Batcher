@@ -12,6 +12,7 @@ import { ShippingMetadataModal } from "@/components/modals/ShippingMetadataModal
 import { KitRegistrationModal } from "@/components/modals/KitRegistrationModal";
 import { BalancePaymentModal } from "@/components/modals/BalancePaymentModal";
 import { DataRevealModal } from "@/components/modals/DataRevealModal";
+import { getCurrentBatchId, getBatchInfo, getParticipantInfo } from "@/lib/contract";
 
 export default function Home() {
   const {
@@ -40,22 +41,50 @@ export default function Home() {
 
   const walletAddress = (user as any)?.verifiedCredentials?.[0]?.address;
 
-  // Mock data for demo (replace with real API calls)
-  const mockCurrentBatch = {
-    batchId: 1,
-    currentCount: 18,
-    maxSize: 24,
-    recentJoins: ["0xA1B2...", "0xC3D4...", "0xE5F6..."],
-  };
+  // State for smart contract data
+  const [currentBatchId, setCurrentBatchId] = useState<number | null>(null);
+  const [currentBatchInfo, setCurrentBatchInfo] = useState<{
+    participantCount: number;
+    state: number;
+  } | null>(null);
+  const [participantInfo, setParticipantInfo] = useState<any>(null);
+  const [loadingContractData, setLoadingContractData] = useState(true);
 
-  const mockBatchHistory = [
-    {
-      id: 1,
-      state: "Pending",
-      participantCount: 18,
-      createdAt: "2025-01-20T10:00:00Z",
-    },
-  ];
+  // Fetch current batch data from smart contract
+  useEffect(() => {
+    const fetchBatchData = async () => {
+      try {
+        setLoadingContractData(true);
+        const batchId = await getCurrentBatchId();
+        setCurrentBatchId(batchId);
+
+        const batchInfo = await getBatchInfo(batchId);
+        setCurrentBatchInfo(batchInfo);
+
+        // If user is authenticated, fetch their participant info
+        if (walletAddress && batchInfo) {
+          try {
+            const participantData = await getParticipantInfo(batchId, walletAddress);
+            setParticipantInfo(participantData);
+          } catch (err) {
+            // User might not be a participant yet
+            console.log("User not a participant in current batch");
+            setParticipantInfo(null);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch batch data:", error);
+      } finally {
+        setLoadingContractData(false);
+      }
+    };
+
+    if (isDynamicInitialized) {
+      fetchBatchData();
+    }
+  }, [isDynamicInitialized, walletAddress]);
+
+  const MAX_BATCH_SIZE = 24;
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -84,12 +113,14 @@ export default function Home() {
         </div>
 
         {/* Live Queue Stats - Always visible */}
-        <LiveQueueStats
-          currentCount={mockCurrentBatch.currentCount}
-          maxSize={mockCurrentBatch.maxSize}
-          batchId={mockCurrentBatch.batchId}
-          recentJoins={mockCurrentBatch.recentJoins}
-        />
+        {currentBatchId && currentBatchInfo && (
+          <LiveQueueStats
+            currentCount={currentBatchInfo.participantCount}
+            maxSize={MAX_BATCH_SIZE}
+            batchId={currentBatchId}
+            recentJoins={[]} // TODO: Can be fetched from events or API
+          />
+        )}
 
         {/* Authenticated User Content */}
         {isAuthenticated ? (
@@ -206,7 +237,10 @@ export default function Home() {
 
         {/* Global Batch History */}
         <div className="mb-8">
-          <BatchHistory batches={mockBatchHistory} loading={checkingBatch} />
+          <BatchHistory
+            batches={[]} // TODO: Fetch historical batches from events or API
+            loading={loadingContractData}
+          />
         </div>
 
         {/* Feature Cards */}
@@ -301,53 +335,61 @@ export default function Home() {
       </footer>
 
       {/* Modals */}
-      <JoinQueueModal
-        isOpen={isJoinModalOpen}
-        onClose={() => setIsJoinModalOpen(false)}
-        onJoinSuccess={() => {
-          refreshBatch();
-          setIsShippingModalOpen(true);
-        }}
-        batchId={mockCurrentBatch.batchId}
-        currentCount={mockCurrentBatch.currentCount}
-        maxSize={mockCurrentBatch.maxSize}
-      />
+      {currentBatchId && currentBatchInfo && (
+        <>
+          <JoinQueueModal
+            isOpen={isJoinModalOpen}
+            onClose={() => setIsJoinModalOpen(false)}
+            onJoinSuccess={() => {
+              refreshBatch();
+              setIsShippingModalOpen(true);
+            }}
+            batchId={currentBatchId}
+            currentCount={currentBatchInfo.participantCount}
+            maxSize={MAX_BATCH_SIZE}
+          />
 
-      <ShippingMetadataModal
-        isOpen={isShippingModalOpen}
-        onClose={() => setIsShippingModalOpen(false)}
-        onSubmitSuccess={() => {
-          refreshBatch();
-        }}
-        batchId={batchInfo?.batchId || mockCurrentBatch.batchId}
-      />
+          <ShippingMetadataModal
+            isOpen={isShippingModalOpen}
+            onClose={() => setIsShippingModalOpen(false)}
+            onSubmitSuccess={() => {
+              refreshBatch();
+            }}
+            batchId={batchInfo?.batchId || currentBatchId}
+          />
 
-      <KitRegistrationModal
-        isOpen={isKitRegistrationModalOpen}
-        onClose={() => setIsKitRegistrationModalOpen(false)}
-        onRegisterSuccess={() => {
-          refreshBatch();
-        }}
-        batchId={batchInfo?.batchId || mockCurrentBatch.batchId}
-      />
+          <KitRegistrationModal
+            isOpen={isKitRegistrationModalOpen}
+            onClose={() => setIsKitRegistrationModalOpen(false)}
+            onRegisterSuccess={() => {
+              refreshBatch();
+            }}
+            batchId={batchInfo?.batchId || currentBatchId}
+          />
 
-      <BalancePaymentModal
-        isOpen={isBalancePaymentModalOpen}
-        onClose={() => setIsBalancePaymentModalOpen(false)}
-        onPaymentSuccess={() => {
-          refreshBatch();
-          setIsShippingModalOpen(true);
-        }}
-        batchId={batchInfo?.batchId || mockCurrentBatch.batchId}
-        paymentDeadline={new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)}
-      />
+          <BalancePaymentModal
+            isOpen={isBalancePaymentModalOpen}
+            onClose={() => setIsBalancePaymentModalOpen(false)}
+            onPaymentSuccess={() => {
+              refreshBatch();
+              setIsShippingModalOpen(true);
+            }}
+            batchId={batchInfo?.batchId || currentBatchId}
+            paymentDeadline={
+              participantInfo?.paymentDeadline
+                ? new Date(participantInfo.paymentDeadline * 1000)
+                : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+            }
+          />
 
-      <DataRevealModal
-        isOpen={isDataRevealModalOpen}
-        onClose={() => setIsDataRevealModalOpen(false)}
-        batchId={batchInfo?.batchId || mockCurrentBatch.batchId}
-        kitId="KIT-ABC12345"
-      />
+          <DataRevealModal
+            isOpen={isDataRevealModalOpen}
+            onClose={() => setIsDataRevealModalOpen(false)}
+            batchId={batchInfo?.batchId || currentBatchId}
+            kitId="KIT-ABC12345"
+          />
+        </>
+      )}
     </main>
   );
 }

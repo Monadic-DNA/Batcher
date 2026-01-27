@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X, CreditCard, Wallet } from "lucide-react";
+import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
+import { ethers } from "ethers";
+import { joinBatch, getFullPrice } from "@/lib/contract";
 
 interface JoinQueueModalProps {
   isOpen: boolean;
@@ -25,25 +28,68 @@ export function JoinQueueModal({
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(null);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pricing, setPricing] = useState<{ deposit: number; total: number } | null>(null);
 
-  const DEPOSIT_AMOUNT = 10; // $10.00 deposit (10% of $100 total)
-  const TOTAL_AMOUNT = 100;
+  // Fetch pricing from smart contract
+  useEffect(() => {
+    const fetchPricing = async () => {
+      try {
+        const fullPrice = await getFullPrice();
+        const fullPriceInEth = Number(ethers.formatEther(fullPrice));
+        setPricing({
+          deposit: fullPriceInEth * 0.1,
+          total: fullPriceInEth,
+        });
+      } catch (err) {
+        console.error("Failed to fetch pricing:", err);
+        // Fallback to default values
+        setPricing({ deposit: 0.01, total: 0.1 });
+      }
+    };
+
+    if (isOpen) {
+      fetchPricing();
+    }
+  }, [isOpen]);
+
+  const { primaryWallet } = useDynamicContext();
 
   const handleCryptoPayment = async () => {
     setProcessing(true);
     setError(null);
     try {
-      // TODO: Call smart contract joinBatch() function
-      // This will require:
-      // 1. Connect to contract using ethers
-      // 2. Calculate deposit amount (10% of total price)
-      // 3. Send transaction with value
-      // 4. Wait for confirmation
-      console.log("Initiating crypto payment...");
-      await new Promise((resolve) => setTimeout(resolve, 2000)); // Simulate tx
+      if (!primaryWallet) {
+        throw new Error("Please connect your wallet first");
+      }
+
+      // Get the wallet connector and create ethers signer
+      const walletConnector = await primaryWallet.connector;
+      if (!walletConnector) {
+        throw new Error("Wallet connector not available");
+      }
+
+      const provider = await walletConnector.ethers?.getRpcProvider();
+      if (!provider) {
+        throw new Error("Provider not available");
+      }
+
+      const signer = await provider.getSigner();
+
+      // Get full price from contract and calculate deposit (10%)
+      const fullPrice = await getFullPrice();
+      const depositAmount = (fullPrice * 10n) / 100n;
+
+      console.log("Joining batch with deposit:", ethers.formatEther(depositAmount));
+
+      // Call smart contract joinBatch() function
+      const receipt = await joinBatch(depositAmount, signer);
+
+      console.log("Transaction successful:", receipt.transactionHash);
+
       onJoinSuccess();
       onClose();
     } catch (err) {
+      console.error("Crypto payment error:", err);
       setError(
         err instanceof Error ? err.message : "Crypto payment failed. Please try again."
       );
@@ -128,24 +174,30 @@ export function JoinQueueModal({
           {/* Pricing Breakdown */}
           <div className="space-y-3">
             <h3 className="font-semibold text-gray-900">Pricing</h3>
-            <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Total Cost</span>
-                <span className="font-medium">${TOTAL_AMOUNT.toFixed(2)}</span>
+            {pricing ? (
+              <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Total Cost</span>
+                  <span className="font-medium">{pricing.total.toFixed(4)} ETH</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Deposit (Now)</span>
+                  <span className="font-bold text-blue-600">
+                    {pricing.deposit.toFixed(4)} ETH
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Balance (Later)</span>
+                  <span className="font-medium">
+                    {(pricing.total - pricing.deposit).toFixed(4)} ETH
+                  </span>
+                </div>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Deposit (Now)</span>
-                <span className="font-bold text-blue-600">
-                  ${DEPOSIT_AMOUNT.toFixed(2)}
-                </span>
+            ) : (
+              <div className="bg-gray-50 rounded-lg p-4 text-center text-sm text-gray-500">
+                Loading pricing...
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Balance (Later)</span>
-                <span className="font-medium">
-                  ${(TOTAL_AMOUNT - DEPOSIT_AMOUNT).toFixed(2)}
-                </span>
-              </div>
-            </div>
+            )}
             <p className="text-xs text-gray-500">
               Pay 10% deposit now to join. You&apos;ll pay the remaining 90% when the
               batch becomes active (within 7 days).
@@ -250,10 +302,14 @@ export function JoinQueueModal({
                 </button>
                 <button
                   onClick={handlePayment}
-                  disabled={processing}
+                  disabled={processing || !pricing}
                   className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {processing ? "Processing..." : `Pay $${DEPOSIT_AMOUNT.toFixed(2)}`}
+                  {processing
+                    ? "Processing..."
+                    : pricing
+                      ? `Pay ${pricing.deposit.toFixed(4)} ETH`
+                      : "Loading..."}
                 </button>
               </div>
             </div>

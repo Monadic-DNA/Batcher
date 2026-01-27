@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { X, CreditCard, Wallet, Clock, AlertTriangle } from "lucide-react";
+import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
+import { ethers } from "ethers";
+import { payBalance, getFullPrice } from "@/lib/contract";
 
 interface BalancePaymentModalProps {
   isOpen: boolean;
@@ -25,8 +28,30 @@ export function BalancePaymentModal({
   const [error, setError] = useState<string | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<string>("");
   const [isUrgent, setIsUrgent] = useState(false);
+  const [pricing, setPricing] = useState<{ balance: number; total: number; deposit: number } | null>(null);
 
-  const BALANCE_AMOUNT = 90; // $90.00 balance (90% of $100 total)
+  // Fetch pricing from smart contract
+  useEffect(() => {
+    const fetchPricing = async () => {
+      try {
+        const fullPrice = await getFullPrice();
+        const fullPriceInEth = Number(ethers.formatEther(fullPrice));
+        setPricing({
+          total: fullPriceInEth,
+          deposit: fullPriceInEth * 0.1,
+          balance: fullPriceInEth * 0.9,
+        });
+      } catch (err) {
+        console.error("Failed to fetch pricing:", err);
+        // Fallback to default values
+        setPricing({ total: 0.1, deposit: 0.01, balance: 0.09 });
+      }
+    };
+
+    if (isOpen) {
+      fetchPricing();
+    }
+  }, [isOpen]);
 
   // Countdown timer
   useEffect(() => {
@@ -57,21 +82,44 @@ export function BalancePaymentModal({
     return () => clearInterval(interval);
   }, [isOpen, paymentDeadline]);
 
+  const { primaryWallet } = useDynamicContext();
+
   const handleCryptoPayment = async () => {
     setProcessing(true);
     setError(null);
     try {
-      // TODO: Call smart contract payBalance() function
-      // This will require:
-      // 1. Connect to contract using ethers
-      // 2. Calculate balance amount (90% of total price)
-      // 3. Send transaction with value
-      // 4. Wait for confirmation
-      console.log("Initiating crypto payment...");
-      await new Promise((resolve) => setTimeout(resolve, 2000)); // Simulate tx
+      if (!primaryWallet) {
+        throw new Error("Please connect your wallet first");
+      }
+
+      // Get the wallet connector and create ethers signer
+      const walletConnector = await primaryWallet.connector;
+      if (!walletConnector) {
+        throw new Error("Wallet connector not available");
+      }
+
+      const provider = await walletConnector.ethers?.getRpcProvider();
+      if (!provider) {
+        throw new Error("Provider not available");
+      }
+
+      const signer = await provider.getSigner();
+
+      // Get full price from contract and calculate balance (90%)
+      const fullPrice = await getFullPrice();
+      const balanceAmount = (fullPrice * 90n) / 100n;
+
+      console.log("Paying balance:", ethers.formatEther(balanceAmount));
+
+      // Call smart contract payBalance() function
+      const receipt = await payBalance(batchId, balanceAmount, signer);
+
+      console.log("Transaction successful:", receipt.transactionHash);
+
       onPaymentSuccess();
       onClose();
     } catch (err) {
+      console.error("Crypto payment error:", err);
       setError(
         err instanceof Error ? err.message : "Crypto payment failed. Please try again."
       );
@@ -185,23 +233,29 @@ export function BalancePaymentModal({
           )}
 
           {/* Amount Due */}
-          <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-600">Total Cost</span>
-              <span className="font-medium">$100.00</span>
+          {pricing ? (
+            <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">Total Cost</span>
+                <span className="font-medium">{pricing.total.toFixed(4)} ETH</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">Deposit Paid</span>
+                <span className="text-green-600">-{pricing.deposit.toFixed(4)} ETH</span>
+              </div>
+              <div className="border-t border-gray-200 my-2" />
+              <div className="flex justify-between">
+                <span className="font-semibold text-gray-900">Amount Due</span>
+                <span className="text-2xl font-bold text-blue-600">
+                  {pricing.balance.toFixed(4)} ETH
+                </span>
+              </div>
             </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-600">Deposit Paid</span>
-              <span className="text-green-600">-$10.00</span>
+          ) : (
+            <div className="bg-gray-50 rounded-lg p-4 text-center text-sm text-gray-500">
+              Loading pricing...
             </div>
-            <div className="border-t border-gray-200 my-2" />
-            <div className="flex justify-between">
-              <span className="font-semibold text-gray-900">Amount Due</span>
-              <span className="text-2xl font-bold text-blue-600">
-                ${BALANCE_AMOUNT.toFixed(2)}
-              </span>
-            </div>
-          </div>
+          )}
 
           {/* Payment Method Selection */}
           {!paymentMethod && (
@@ -301,7 +355,7 @@ export function BalancePaymentModal({
                 </button>
                 <button
                   onClick={handlePayment}
-                  disabled={processing}
+                  disabled={processing || !pricing}
                   className={`flex-1 px-4 py-3 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                     isUrgent
                       ? "bg-red-600 hover:bg-red-700"
@@ -310,7 +364,9 @@ export function BalancePaymentModal({
                 >
                   {processing
                     ? "Processing..."
-                    : `Pay $${BALANCE_AMOUNT.toFixed(2)}`}
+                    : pricing
+                      ? `Pay ${pricing.balance.toFixed(4)} ETH`
+                      : "Loading..."}
                 </button>
               </div>
             </div>

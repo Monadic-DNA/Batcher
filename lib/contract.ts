@@ -2,28 +2,27 @@ import { ethers } from "ethers";
 
 // Smart contract ABI (from compiled contracts/BatchStateMachine.sol)
 const BATCH_STATE_MACHINE_ABI = [
-  "function joinBatch(uint256 batchId) external payable",
+  "function joinBatch() external payable",
   "function payBalance(uint256 batchId) external payable",
   "function storeCommitmentHash(uint256 batchId, bytes32 commitmentHash) external",
   "function slashUser(uint256 batchId, address user) external",
   "function canStillPay(uint256 batchId, address user) external view returns (bool)",
-  "function getUserBatchInfo(uint256 batchId, address user) external view returns (bool depositPaid, bool balancePaid, uint256 depositPaidAt, uint256 balancePaidAt)",
-  "function getBatchState(uint256 batchId) external view returns (uint8)",
-  "function getBatchParticipantCount(uint256 batchId) external view returns (uint256)",
-  "function getCurrentBatchId() external view returns (uint256)",
-  "function createBatch() external",
-  "function stageBatch(uint256 batchId) external",
-  "function activateBatch(uint256 batchId) external",
-  "function startSequencing(uint256 batchId) external",
-  "function completeBatch(uint256 batchId) external",
-  "function purgeBatch(uint256 batchId) external",
+  "function getBatchInfo(uint256 batchId) external view returns (uint8 state, uint256 participantCount, uint256 createdAt, uint256 stateChangedAt)",
+  "function getParticipantInfo(uint256 batchId, address user) external view returns (bytes32 commitmentHash, uint256 depositAmount, uint256 balanceAmount, bool balancePaid, bool slashed, uint256 joinedAt, uint256 paymentDeadline)",
+  "function isParticipant(uint256 batchId, address user) external view returns (bool)",
+  "function currentBatchId() external view returns (uint256)",
+  "function fullPrice() external view returns (uint256)",
+  "function transitionBatchState(uint256 batchId, uint8 newState) external",
+  "function updateFullPrice(uint256 newPrice) external",
   "function withdrawFunds(uint256 amount) external",
-  "function isAdmin(address account) external view returns (bool)",
+  "function owner() external view returns (address)",
   "event BatchCreated(uint256 indexed batchId, uint256 timestamp)",
   "event UserJoined(uint256 indexed batchId, address indexed user, uint256 depositAmount)",
-  "event BalancePaid(uint256 indexed batchId, address indexed user, uint256 balanceAmount)",
+  "event BalancePaymentReceived(uint256 indexed batchId, address indexed user, uint256 amount)",
   "event UserSlashed(uint256 indexed batchId, address indexed user, uint256 penaltyAmount)",
-  "event BatchStateChanged(uint256 indexed batchId, uint8 newState)",
+  "event BatchStateChanged(uint256 indexed batchId, uint8 newState, uint256 timestamp)",
+  "event CommitmentHashStored(uint256 indexed batchId, address indexed user, bytes32 commitmentHash)",
+  "event FundsWithdrawn(address indexed admin, uint256 amount)",
 ];
 
 export enum BatchState {
@@ -49,11 +48,14 @@ export interface BatchInfo {
   participantCount: number;
 }
 
-export interface UserBatchInfo {
-  depositPaid: boolean;
+export interface ParticipantInfo {
+  commitmentHash: string;
+  depositAmount: bigint;
+  balanceAmount: bigint;
   balancePaid: boolean;
-  depositPaidAt: number;
-  balancePaidAt: number;
+  slashed: boolean;
+  joinedAt: number;
+  paymentDeadline: number;
 }
 
 /**
@@ -128,43 +130,59 @@ export function getProvider(): ethers.JsonRpcProvider {
  */
 export async function getCurrentBatchId(): Promise<number> {
   const contract = getContract();
-  const batchId = await contract.getCurrentBatchId();
+  const batchId = await contract.currentBatchId();
   return Number(batchId);
 }
 
 /**
- * Get batch state
+ * Get batch info (state, participant count, timestamps)
  */
-export async function getBatchState(batchId: number): Promise<BatchState> {
+export async function getBatchInfo(batchId: number): Promise<BatchInfo> {
   const contract = getContract();
-  const state = await contract.getBatchState(batchId);
-  return Number(state) as BatchState;
+  const info = await contract.getBatchInfo(batchId);
+  return {
+    state: Number(info.state) as BatchState,
+    participantCount: Number(info.participantCount),
+  };
 }
 
 /**
- * Get batch participant count
+ * Get full price from contract
  */
-export async function getBatchParticipantCount(batchId: number): Promise<number> {
+export async function getFullPrice(): Promise<bigint> {
   const contract = getContract();
-  const count = await contract.getBatchParticipantCount(batchId);
-  return Number(count);
+  return await contract.fullPrice();
 }
 
 /**
- * Get user's batch info
+ * Get participant info
  */
-export async function getUserBatchInfo(
+export async function getParticipantInfo(
   batchId: number,
   userAddress: string
-): Promise<UserBatchInfo> {
+): Promise<ParticipantInfo> {
   const contract = getContract();
-  const info = await contract.getUserBatchInfo(batchId, userAddress);
+  const info = await contract.getParticipantInfo(batchId, userAddress);
   return {
-    depositPaid: info.depositPaid,
+    commitmentHash: info.commitmentHash,
+    depositAmount: info.depositAmount,
+    balanceAmount: info.balanceAmount,
     balancePaid: info.balancePaid,
-    depositPaidAt: Number(info.depositPaidAt),
-    balancePaidAt: Number(info.balancePaidAt),
+    slashed: info.slashed,
+    joinedAt: Number(info.joinedAt),
+    paymentDeadline: Number(info.paymentDeadline),
   };
+}
+
+/**
+ * Check if user is participant in batch
+ */
+export async function isParticipant(
+  batchId: number,
+  userAddress: string
+): Promise<boolean> {
+  const contract = getContract();
+  return await contract.isParticipant(batchId, userAddress);
 }
 
 /**
@@ -179,23 +197,23 @@ export async function canUserStillPay(
 }
 
 /**
- * Check if address is admin
+ * Check if address is owner
  */
-export async function isAdmin(address: string): Promise<boolean> {
+export async function isOwner(address: string): Promise<boolean> {
   const contract = getContract();
-  return await contract.isAdmin(address);
+  const ownerAddress = await contract.owner();
+  return ownerAddress.toLowerCase() === address.toLowerCase();
 }
 
 /**
- * Join batch (requires signer)
+ * Join batch (requires signer) - joins current pending batch
  */
 export async function joinBatch(
-  batchId: number,
   depositAmount: bigint,
   signer: ethers.Signer
 ) {
   const contract = getContractWithSigner(signer);
-  const tx = await contract.joinBatch(batchId, { value: depositAmount });
+  const tx = await contract.joinBatch({ value: depositAmount });
   return await tx.wait();
 }
 
@@ -228,56 +246,24 @@ export async function storeCommitmentHash(
 // Admin functions
 
 /**
- * Create new batch (admin only)
+ * Transition batch state (owner only)
  */
-export async function createBatch(signer: ethers.Signer) {
+export async function transitionBatchState(
+  batchId: number,
+  newState: BatchState,
+  signer: ethers.Signer
+) {
   const contract = getContractWithSigner(signer);
-  const tx = await contract.createBatch();
+  const tx = await contract.transitionBatchState(batchId, newState);
   return await tx.wait();
 }
 
 /**
- * Stage batch (admin only)
+ * Update full price (owner only)
  */
-export async function stageBatch(batchId: number, signer: ethers.Signer) {
+export async function updateFullPrice(newPrice: bigint, signer: ethers.Signer) {
   const contract = getContractWithSigner(signer);
-  const tx = await contract.stageBatch(batchId);
-  return await tx.wait();
-}
-
-/**
- * Activate batch (admin only)
- */
-export async function activateBatch(batchId: number, signer: ethers.Signer) {
-  const contract = getContractWithSigner(signer);
-  const tx = await contract.activateBatch(batchId);
-  return await tx.wait();
-}
-
-/**
- * Start sequencing (admin only)
- */
-export async function startSequencing(batchId: number, signer: ethers.Signer) {
-  const contract = getContractWithSigner(signer);
-  const tx = await contract.startSequencing(batchId);
-  return await tx.wait();
-}
-
-/**
- * Complete batch (admin only)
- */
-export async function completeBatch(batchId: number, signer: ethers.Signer) {
-  const contract = getContractWithSigner(signer);
-  const tx = await contract.completeBatch(batchId);
-  return await tx.wait();
-}
-
-/**
- * Purge batch (admin only)
- */
-export async function purgeBatch(batchId: number, signer: ethers.Signer) {
-  const contract = getContractWithSigner(signer);
-  const tx = await contract.purgeBatch(batchId);
+  const tx = await contract.updateFullPrice(newPrice);
   return await tx.wait();
 }
 
