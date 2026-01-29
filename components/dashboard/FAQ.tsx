@@ -9,6 +9,11 @@ interface FAQItem {
 
 const faqs: FAQItem[] = [
   {
+    question: "What is a batch?",
+    answer:
+      "A batch is a group of exactly 24 people who share the cost of DNA sequencing. By pooling together, everyone gets professional-grade DNA testing at a fraction of the individual cost. Each batch moves through defined stages: Pending (collecting participants), Staged (full, awaiting activation), Active (kits being sent), Sequencing (lab processing), Completed (results ready), and Purged (data deleted after 60 days).",
+  },
+  {
     question: "How does the DNA Batcher work?",
     answer:
       "DNA Batcher coordinates groups of 24 people to share DNA testing costs. You pay a 10% deposit to join the queue, then pay the remaining 90% when your batch is full. Once activated, you'll receive a kit, send your sample, and get encrypted results.",

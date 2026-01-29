@@ -422,6 +422,14 @@ export default function Home() {
 
         {/* Below the Fold */}
         <div className="space-y-8 mt-8">
+          {/* Global Batch History - Moved up for actionability */}
+          <div id="batch-history-section">
+            <BatchHistory
+              batches={[]} // TODO: Fetch historical batches from events or API
+              loading={loadingContractData}
+            />
+          </div>
+
           {/* Feature Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           <div className="bg-white rounded-lg shadow-lg p-6">
@@ -492,14 +500,6 @@ export default function Home() {
               10% deposit + 90% balance.
             </p>
           </div>
-          </div>
-
-          {/* Global Batch History */}
-          <div id="batch-history-section">
-            <BatchHistory
-              batches={[]} // TODO: Fetch historical batches from events or API
-              loading={loadingContractData}
-            />
           </div>
 
           {/* FAQ Section */}

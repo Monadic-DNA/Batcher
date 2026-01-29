@@ -14,7 +14,8 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "Recherché Inc" }],
   icons: {
-    icon: "/batcher.png",
+    icon: "/favicon.png",
+    apple: "/favicon.png",
   },
 };
 

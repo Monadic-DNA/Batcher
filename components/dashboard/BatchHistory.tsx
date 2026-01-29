@@ -94,8 +94,15 @@ export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {batches.map((batch) => (
-                  <tr key={batch.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <tr
+                    key={batch.id}
+                    className="hover:bg-blue-50 transition-colors cursor-pointer"
+                    onClick={() => {
+                      // TODO: Navigate to batch detail or expand inline
+                      console.log('View batch', batch.id);
+                    }}
+                  >
+                    <td className="px-4 py-3 whitespace-nowrap text-sm font-bold text-blue-600">
                       #{batch.id}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
@@ -106,7 +113,15 @@ export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
                       </span>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                      {batch.participantCount}/24
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{batch.participantCount}/24</span>
+                        <div className="w-16 bg-gray-200 rounded-full h-2">
+                          <div
+                            className="bg-blue-600 h-2 rounded-full transition-all"
+                            style={{ width: `${(batch.participantCount / 24) * 100}%` }}
+                          />
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                       {new Date(batch.createdAt).toLocaleDateString()}
@@ -125,12 +140,16 @@ export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
           {/* Mobile View - Cards */}
           <div className="md:hidden space-y-3">
             {batches.map((batch) => (
-              <div
+              <button
                 key={batch.id}
-                className="bg-gray-50 rounded-lg p-4 border border-gray-200"
+                onClick={() => {
+                  // TODO: Navigate to batch detail or expand inline
+                  console.log('View batch', batch.id);
+                }}
+                className="w-full bg-gray-50 hover:bg-blue-50 transition-colors rounded-lg p-4 border border-gray-200 text-left"
               >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-lg font-bold text-gray-900">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-lg font-bold text-blue-600">
                     Batch #{batch.id}
                   </span>
                   <span
@@ -139,10 +158,18 @@ export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
                     {batch.state}
                   </span>
                 </div>
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Participants:</span>
-                    <span className="font-medium">{batch.participantCount}/24</span>
+                <div className="space-y-2 text-sm">
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span className="text-gray-600">Participants:</span>
+                      <span className="font-medium">{batch.participantCount}/24</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div
+                        className="bg-blue-600 h-2 rounded-full transition-all"
+                        style={{ width: `${(batch.participantCount / 24) * 100}%` }}
+                      />
+                    </div>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Created:</span>
@@ -159,7 +186,7 @@ export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
                     </div>
                   )}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
