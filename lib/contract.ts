@@ -10,6 +10,7 @@ const BATCH_STATE_MACHINE_ABI = [
   "function getBatchInfo(uint256 batchId) external view returns (uint8 state, uint256 participantCount, uint256 createdAt, uint256 stateChangedAt)",
   "function getParticipantInfo(uint256 batchId, address user) external view returns (bytes32 commitmentHash, uint256 depositAmount, uint256 balanceAmount, bool balancePaid, bool slashed, uint256 joinedAt, uint256 paymentDeadline)",
   "function isParticipant(uint256 batchId, address user) external view returns (bool)",
+  "function getParticipantAddress(uint256 batchId, uint256 index) external view returns (address)",
   "function currentBatchId() external view returns (uint256)",
   "function fullPrice() external view returns (uint256)",
   "function transitionBatchState(uint256 batchId, uint8 newState) external",
@@ -59,7 +60,7 @@ export interface ParticipantInfo {
 }
 
 /**
- * Get RPC URL with Alchemy support
+ * Get RPC URL with Alchemy support and CSP-safe localhost proxying
  */
 function getRpcUrl(): string {
   const alchemyKey = process.env.ALCHEMY_API_KEY;
@@ -84,6 +85,11 @@ function getRpcUrl(): string {
     return `https://${network}.g.alchemy.com/v2/${alchemyKey}`;
   }
 
+  // For localhost in browser, use API proxy to avoid CSP issues
+  if (typeof window !== "undefined" && explicitRpcUrl?.includes("localhost")) {
+    return `${window.location.origin}/api/rpc`;
+  }
+
   // Fall back to explicit RPC URL or localhost
   return explicitRpcUrl || "http://localhost:8545";
 }
@@ -98,7 +104,6 @@ export function getContract(providerOrSigner?: ethers.Provider | ethers.Signer) 
   }
 
   if (!providerOrSigner) {
-    // Use Alchemy or default provider
     const rpcUrl = getRpcUrl();
     providerOrSigner = new ethers.JsonRpcProvider(rpcUrl);
   }
@@ -183,6 +188,24 @@ export async function isParticipant(
 ): Promise<boolean> {
   const contract = getContract();
   return await contract.isParticipant(batchId, userAddress);
+}
+
+/**
+ * Get all participant addresses for a batch by iterating through participants array
+ */
+export async function getBatchParticipants(batchId: number): Promise<string[]> {
+  const contract = getContract();
+  const batchInfo = await contract.getBatchInfo(batchId);
+  const participantCount = Number(batchInfo.participantCount);
+
+  const addresses: string[] = [];
+  // Participants are 1-indexed in the contract
+  for (let i = 1; i <= participantCount; i++) {
+    const address = await contract.getParticipantAddress(batchId, i);
+    addresses.push(address);
+  }
+
+  return addresses;
 }
 
 /**

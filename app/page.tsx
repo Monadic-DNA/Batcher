@@ -12,7 +12,23 @@ import { ShippingMetadataModal } from "@/components/modals/ShippingMetadataModal
 import { KitRegistrationModal } from "@/components/modals/KitRegistrationModal";
 import { BalancePaymentModal } from "@/components/modals/BalancePaymentModal";
 import { DataRevealModal } from "@/components/modals/DataRevealModal";
-import { getCurrentBatchId, getBatchInfo, getParticipantInfo } from "@/lib/contract";
+import { getCurrentBatchId, getBatchInfo, getParticipantInfo, getBatchParticipants } from "@/lib/contract";
+
+// Helper to get block explorer URL
+const getExplorerUrl = (address: string): string => {
+  const chainId = process.env.NEXT_PUBLIC_CHAIN_ID || "31337";
+  const explorerMap: Record<string, string> = {
+    "1": "https://etherscan.io",
+    "11155111": "https://sepolia.etherscan.io",
+    "42161": "https://arbiscan.io",
+    "421614": "https://sepolia.arbiscan.io",
+    "8453": "https://basescan.org",
+    "84532": "https://sepolia.basescan.org",
+    "31337": "http://localhost:8545", // Local hardhat - no explorer
+  };
+  const baseUrl = explorerMap[chainId] || "https://etherscan.io";
+  return chainId === "31337" ? "#" : `${baseUrl}/address/${address}`;
+};
 
 export default function Home() {
   const {
@@ -48,6 +64,8 @@ export default function Home() {
     state: number;
   } | null>(null);
   const [participantInfo, setParticipantInfo] = useState<any>(null);
+  const [participants, setParticipants] = useState<string[]>([]);
+  const [ensNames, setEnsNames] = useState<Record<string, string>>({});
   const [loadingContractData, setLoadingContractData] = useState(true);
 
   // Fetch current batch data from smart contract
@@ -60,6 +78,37 @@ export default function Home() {
 
         const batchInfo = await getBatchInfo(batchId);
         setCurrentBatchInfo(batchInfo);
+
+        // Fetch participant addresses
+        try {
+          const participantAddresses = await getBatchParticipants(batchId);
+          setParticipants(participantAddresses);
+
+          // Resolve ENS names for mainnet/sepolia only
+          const chainId = process.env.NEXT_PUBLIC_CHAIN_ID;
+          if (chainId === "1" || chainId === "11155111") {
+            const { ethers } = await import("ethers");
+            const provider = new ethers.JsonRpcProvider(
+              chainId === "1"
+                ? "https://eth-mainnet.g.alchemy.com/v2/demo"
+                : "https://eth-sepolia.g.alchemy.com/v2/demo"
+            );
+
+            const ensMap: Record<string, string> = {};
+            for (const address of participantAddresses) {
+              try {
+                const ens = await provider.lookupAddress(address);
+                if (ens) ensMap[address] = ens;
+              } catch {
+                // ENS lookup failed, skip
+              }
+            }
+            setEnsNames(ensMap);
+          }
+        } catch (err) {
+          console.error("Failed to fetch participants:", err);
+          setParticipants([]);
+        }
 
         // If user is authenticated, fetch their participant info
         if (walletAddress && batchInfo) {
@@ -157,6 +206,19 @@ export default function Home() {
                   <p className="text-xs text-gray-500 mt-2">
                     State: {["Pending", "Staged", "Active", "Sequencing", "Completed", "Purged"][currentBatchInfo.state]}
                   </p>
+                  {process.env.NEXT_PUBLIC_CONTRACT_ADDRESS && process.env.NEXT_PUBLIC_CHAIN_ID !== "31337" && (
+                    <a
+                      href={getExplorerUrl(process.env.NEXT_PUBLIC_CONTRACT_ADDRESS)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline mt-2"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                      View Contract on Explorer
+                    </a>
+                  )}
                 </div>
 
                 {/* Participant List */}
@@ -165,15 +227,46 @@ export default function Home() {
                     Participants ({currentBatchInfo.participantCount})
                   </h3>
                   <div className="bg-gray-50 rounded-lg p-3 max-h-48 overflow-y-auto">
-                    {currentBatchInfo.participantCount > 0 ? (
-                      <div className="space-y-1 text-xs font-mono text-gray-600">
-                        {/* TODO: Fetch actual participant addresses from events or API */}
-                        <p className="text-gray-400 italic">
-                          Participant addresses will appear here
-                        </p>
+                    {participants.length > 0 ? (
+                      <div className="space-y-2 text-xs">
+                        {participants.map((address, idx) => {
+                          const explorerUrl = getExplorerUrl(address);
+                          const ensName = ensNames[address];
+                          const isLocalhost = process.env.NEXT_PUBLIC_CHAIN_ID === "31337";
+
+                          return (
+                            <div key={address} className="flex items-start gap-2 py-1 border-b border-gray-200 last:border-0">
+                              <span className="text-gray-500 font-medium min-w-[30px]">#{idx + 1}</span>
+                              <div className="flex-1 min-w-0">
+                                {ensName && (
+                                  <div className="text-blue-600 font-semibold mb-0.5">
+                                    {ensName}
+                                  </div>
+                                )}
+                                <div className="font-mono text-gray-700 break-all">
+                                  {isLocalhost ? (
+                                    <span title={address}>{address}</span>
+                                  ) : (
+                                    <a
+                                      href={explorerUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="hover:text-blue-600 hover:underline"
+                                      title="View on block explorer"
+                                    >
+                                      {address}
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : (
-                      <p className="text-xs text-gray-400 italic">No participants yet</p>
+                      <p className="text-xs text-gray-400 italic">
+                        {currentBatchInfo.participantCount > 0 ? "Loading participants..." : "No participants yet"}
+                      </p>
                     )}
                   </div>
                 </div>

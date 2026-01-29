@@ -322,4 +322,12 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
     function isParticipant(uint256 batchId, address user) external view returns (bool) {
         return batches[batchId].participantIndex[user] > 0;
     }
+
+    /**
+     * @dev Get participant address by index (1-indexed)
+     */
+    function getParticipantAddress(uint256 batchId, uint256 index) external view returns (address) {
+        require(index > 0 && index <= batches[batchId].participantCount, "Invalid index");
+        return batches[batchId].participants[index].wallet;
+    }
 }
