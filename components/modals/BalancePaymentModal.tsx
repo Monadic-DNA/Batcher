@@ -98,11 +98,12 @@ export function BalancePaymentModal({
         throw new Error("Wallet connector not available");
       }
 
-      const provider = await walletConnector.ethers?.getRpcProvider();
-      if (!provider) {
+      const ethersProvider = (walletConnector as any).ethers?.getRpcProvider();
+      if (!ethersProvider) {
         throw new Error("Provider not available");
       }
 
+      const provider = await ethersProvider;
       const signer = await provider.getSigner();
 
       // Get full price from contract and calculate balance (90%)

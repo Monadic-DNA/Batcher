@@ -33,7 +33,7 @@ export function BatchManagement() {
     },
   ]);
 
-  const [selectedBatch, setSelectedBatch] = useState<number | null>(null);
+  const [, setSelectedBatch] = useState<number | null>(null);
   const [processing, setProcessing] = useState(false);
 
   const getStateColor = (state: string) => {

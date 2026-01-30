@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withRateLimit, RateLimitPresets } from "@/lib/middleware/rateLimit";
 
-async function handlePOST(request: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { walletAddress, storeId, pin } = body;
@@ -66,5 +65,3 @@ async function handlePOST(request: NextRequest) {
     );
   }
 }
-
-export const POST = withRateLimit(handlePOST, RateLimitPresets.standard);

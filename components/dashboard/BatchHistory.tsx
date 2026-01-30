@@ -1,5 +1,8 @@
 "use client";
 
+import { useState } from "react";
+import { BatchDetailModal } from "@/components/modals/BatchDetailModal";
+
 interface Batch {
   id: number;
   state: string;
@@ -14,6 +17,7 @@ interface BatchHistoryProps {
 }
 
 export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
+  const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
   if (loading) {
     return (
       <div className="bg-white rounded-lg shadow-lg p-6">
@@ -97,10 +101,7 @@ export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
                   <tr
                     key={batch.id}
                     className="hover:bg-blue-50 transition-colors cursor-pointer"
-                    onClick={() => {
-                      // TODO: Navigate to batch detail or expand inline
-                      console.log('View batch', batch.id);
-                    }}
+                    onClick={() => setSelectedBatch(batch)}
                   >
                     <td className="px-4 py-3 whitespace-nowrap text-sm font-bold text-blue-600">
                       #{batch.id}
@@ -142,10 +143,7 @@ export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
             {batches.map((batch) => (
               <button
                 key={batch.id}
-                onClick={() => {
-                  // TODO: Navigate to batch detail or expand inline
-                  console.log('View batch', batch.id);
-                }}
+                onClick={() => setSelectedBatch(batch)}
                 className="w-full bg-gray-50 hover:bg-blue-50 transition-colors rounded-lg p-4 border border-gray-200 text-left"
               >
                 <div className="flex items-center justify-between mb-3">
@@ -190,6 +188,19 @@ export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
             ))}
           </div>
         </div>
+      )}
+
+      {/* Batch Detail Modal */}
+      {selectedBatch && (
+        <BatchDetailModal
+          isOpen={!!selectedBatch}
+          onClose={() => setSelectedBatch(null)}
+          batchId={selectedBatch.id}
+          state={selectedBatch.state}
+          participantCount={selectedBatch.participantCount}
+          createdAt={selectedBatch.createdAt}
+          completedAt={selectedBatch.completedAt}
+        />
       )}
     </div>
   );

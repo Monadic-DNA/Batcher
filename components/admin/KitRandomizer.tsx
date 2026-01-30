@@ -10,7 +10,7 @@ interface KitMapping {
 
 export function KitRandomizer() {
   const [selectedBatch, setSelectedBatch] = useState<number>(1);
-  const [participantCount, setParticipantCount] = useState<number>(24);
+  const [participantCount] = useState<number>(24);
   const [kitMappings, setKitMappings] = useState<KitMapping[]>([]);
   const [generating, setGenerating] = useState(false);
 
@@ -45,7 +45,7 @@ export function KitRandomizer() {
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
       // Mock wallet addresses
-      const participants = Array.from({ length: participantCount }, (_, i) => ({
+      const participants = Array.from({ length: participantCount }, () => ({
         walletAddress: `0x${Math.random().toString(16).substring(2, 10).toUpperCase()}...`,
       }));
 

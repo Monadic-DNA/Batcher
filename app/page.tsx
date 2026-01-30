@@ -2,9 +2,7 @@
 
 import { useAuth, AuthButton } from "@/components/AuthProvider";
 import { useEffect, useState } from "react";
-import { LiveQueueStats } from "@/components/dashboard/LiveQueueStats";
 import { UserStatusCard } from "@/components/dashboard/UserStatusCard";
-import { HowItWorks } from "@/components/dashboard/HowItWorks";
 import { BatchHistory } from "@/components/dashboard/BatchHistory";
 import { FAQ } from "@/components/dashboard/FAQ";
 import { JoinQueueModal } from "@/components/modals/JoinQueueModal";
@@ -35,7 +33,6 @@ export default function Home() {
     isAuthenticated,
     user,
     batchInfo,
-    checkingBatch,
     initializeDynamic,
     isDynamicInitialized,
     refreshBatch,
@@ -67,6 +64,14 @@ export default function Home() {
   const [participants, setParticipants] = useState<string[]>([]);
   const [ensNames, setEnsNames] = useState<Record<string, string>>({});
   const [loadingContractData, setLoadingContractData] = useState(true);
+  const [contractError, setContractError] = useState<string | null>(null);
+  const [batchHistory, setBatchHistory] = useState<Array<{
+    id: number;
+    state: string;
+    participantCount: number;
+    createdAt: string;
+    completedAt?: string;
+  }>>([]);
 
   // Fetch current batch data from smart contract
   useEffect(() => {
@@ -79,31 +84,54 @@ export default function Home() {
         const batchInfo = await getBatchInfo(batchId);
         setCurrentBatchInfo(batchInfo);
 
+        // Fetch historical batches (all batches from 1 to current)
+        const history = [];
+        const stateNames = ["Pending", "Staged", "Active", "Sequencing", "Completed", "Purged"];
+
+        for (let i = 1; i <= batchId; i++) {
+          try {
+            const batch = await getBatchInfo(i);
+            history.push({
+              id: i,
+              state: stateNames[batch.state],
+              participantCount: batch.participantCount,
+              createdAt: new Date().toISOString(), // Timestamp not available from contract
+              completedAt: batch.state >= 4 ? new Date().toISOString() : undefined,
+            });
+          } catch (err) {
+            console.error(`Failed to fetch batch ${i}:`, err);
+          }
+        }
+
+        // Reverse to show newest first
+        setBatchHistory(history.reverse());
+
         // Fetch participant addresses
         try {
           const participantAddresses = await getBatchParticipants(batchId);
           setParticipants(participantAddresses);
 
-          // Resolve ENS names for mainnet/sepolia only
+          // Resolve ENS names for mainnet/sepolia via server-side API
           const chainId = process.env.NEXT_PUBLIC_CHAIN_ID;
           if (chainId === "1" || chainId === "11155111") {
-            const { ethers } = await import("ethers");
-            const provider = new ethers.JsonRpcProvider(
-              chainId === "1"
-                ? "https://eth-mainnet.g.alchemy.com/v2/demo"
-                : "https://eth-sepolia.g.alchemy.com/v2/demo"
-            );
+            try {
+              const response = await fetch("/api/ens/resolve", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  addresses: participantAddresses,
+                  chainId,
+                }),
+              });
 
-            const ensMap: Record<string, string> = {};
-            for (const address of participantAddresses) {
-              try {
-                const ens = await provider.lookupAddress(address);
-                if (ens) ensMap[address] = ens;
-              } catch {
-                // ENS lookup failed, skip
+              if (response.ok) {
+                const { ensNames: resolvedNames } = await response.json();
+                setEnsNames(resolvedNames);
               }
+            } catch (error) {
+              console.warn("ENS resolution failed:", error);
+              // Non-critical, continue without ENS names
             }
-            setEnsNames(ensMap);
           }
         } catch (err) {
           console.error("Failed to fetch participants:", err);
@@ -115,7 +143,7 @@ export default function Home() {
           try {
             const participantData = await getParticipantInfo(batchId, walletAddress);
             setParticipantInfo(participantData);
-          } catch (err) {
+          } catch {
             // User might not be a participant yet
             console.log("User not a participant in current batch");
             setParticipantInfo(null);
@@ -123,6 +151,28 @@ export default function Home() {
         }
       } catch (error) {
         console.error("Failed to fetch batch data:", error);
+
+        // Detect specific error types and provide helpful messages
+        const errorMsg = error instanceof Error ? error.message : String(error);
+
+        if (errorMsg.includes("could not decode result data") || errorMsg.includes("BAD_DATA")) {
+          setContractError(
+            "Smart contract not deployed or address is incorrect. " +
+            "Please deploy the contract with: npx hardhat run scripts/deploy.ts --network localhost"
+          );
+        } else if (errorMsg.includes("ECONNREFUSED") || errorMsg.includes("fetch failed")) {
+          setContractError(
+            "Cannot connect to blockchain node. " +
+            "Please start Hardhat node: npx hardhat node"
+          );
+        } else if (errorMsg.includes("Contract address not configured")) {
+          setContractError(
+            "Contract address not configured. " +
+            "Please set NEXT_PUBLIC_CONTRACT_ADDRESS in .env.local"
+          );
+        } else {
+          setContractError(`Failed to load batch data: ${errorMsg}`);
+        }
       } finally {
         setLoadingContractData(false);
       }
@@ -170,6 +220,44 @@ export default function Home() {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Contract Error Banner */}
+        {contractError && (
+          <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-lg">
+            <div className="flex items-start">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3 flex-1">
+                <h3 className="text-sm font-semibold text-red-800">Contract Connection Error</h3>
+                <div className="mt-1 text-sm text-red-700">
+                  <p>{contractError}</p>
+                </div>
+                <div className="mt-3">
+                  <button
+                    onClick={() => {
+                      setContractError(null);
+                      window.location.reload();
+                    }}
+                    className="text-sm font-medium text-red-700 hover:text-red-600 underline"
+                  >
+                    Retry Connection
+                  </button>
+                </div>
+              </div>
+              <button
+                onClick={() => setContractError(null)}
+                className="ml-3 flex-shrink-0 text-red-500 hover:text-red-700"
+              >
+                <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Above the Fold - 3 Column Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           {/* Column 1: Current Batch Info */}
@@ -296,8 +384,21 @@ export default function Home() {
                   </button>
                 </div>
               </>
+            ) : contractError ? (
+              <div className="text-center py-8">
+                <div className="text-gray-400 mb-4">
+                  <svg className="w-16 h-16 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <p className="text-sm">Unable to load batch information</p>
+                  <p className="text-xs mt-1">See error message above</p>
+                </div>
+              </div>
             ) : (
               <div className="text-center py-8 text-gray-400">
+                <svg className="w-8 h-8 mx-auto mb-2 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
                 <p>Loading batch info...</p>
               </div>
             )}
@@ -518,7 +619,7 @@ export default function Home() {
           {/* Global Batch History - Moved up for actionability */}
           <div id="batch-history-section">
             <BatchHistory
-              batches={[]} // TODO: Fetch historical batches from events or API
+              batches={batchHistory}
               loading={loadingContractData}
             />
           </div>

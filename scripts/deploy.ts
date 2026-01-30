@@ -30,8 +30,10 @@ async function main() {
   console.log("   1. Update .env.local:");
   console.log(`      NEXT_PUBLIC_CONTRACT_ADDRESS=${contractAddress}`);
   console.log("      NEXT_PUBLIC_RPC_URL=http://localhost:8545");
-  console.log("\n   2. Run populate script:");
-  console.log("      npx hardhat run scripts/populate-batch.ts --network localhost");
+  console.log("\n   2. Populate batch with 23 participants:");
+  console.log(`      CONTRACT_ADDRESS=${contractAddress} npx hardhat run scripts/populate-batch.ts --network localhost`);
+  console.log("\n   3. (Optional) Add one more to complete batch (24/24):");
+  console.log(`      CONTRACT_ADDRESS=${contractAddress} npx hardhat run scripts/add-one-participant.ts --network localhost`);
 }
 
 main()

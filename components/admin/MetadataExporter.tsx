@@ -29,7 +29,7 @@ export function MetadataExporter() {
       // Mock data - in production, decrypt from Nillion
       const mockData: ParticipantMetadata[] = Array.from(
         { length: 24 },
-        (_, i) => ({
+        () => ({
           kitId: `KIT-${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
           age: Math.random() > 0.3 ? Math.floor(Math.random() * 50) + 20 : undefined,
           sex:
