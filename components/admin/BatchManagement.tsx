@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { getBatchInfo, getCurrentBatchId } from "@/lib/contract";
 import {
   PlayCircle,
   AlertCircle,
@@ -22,19 +23,49 @@ interface Batch {
 }
 
 export function BatchManagement() {
-  const [batches, setBatches] = useState<Batch[]>([
-    {
-      id: 1,
-      state: "Pending",
-      participantCount: 18,
-      depositsPaid: 18,
-      balancesPaid: 0,
-      createdAt: "2025-01-20T10:00:00Z",
-    },
-  ]);
-
+  const [batches, setBatches] = useState<Batch[]>([]);
   const [, setSelectedBatch] = useState<number | null>(null);
   const [processing, setProcessing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
+
+  const stateNames = ["Pending", "Staged", "Active", "Sequencing", "Completed", "Purged"];
+
+  useEffect(() => {
+    loadBatches();
+  }, []);
+
+  const loadBatches = async () => {
+    try {
+      setLoading(true);
+      const currentBatchId = await getCurrentBatchId();
+
+      const batchPromises = [];
+      for (let i = 1; i <= currentBatchId; i++) {
+        batchPromises.push(getBatchInfo(i));
+      }
+
+      const batchInfos = await Promise.all(batchPromises);
+
+      const loadedBatches: Batch[] = batchInfos.map((info, index) => ({
+        id: index + 1,
+        state: stateNames[info.state],
+        participantCount: info.participantCount,
+        depositsPaid: info.participantCount, // Deposits are paid when joining
+        balancesPaid: 0, // TODO: Track balance payments
+        createdAt: new Date().toISOString(),
+      }));
+
+      setBatches(loadedBatches.reverse()); // Show newest first
+      if (loadedBatches.length > 0 && !selectedBatchId) {
+        setSelectedBatchId(currentBatchId);
+      }
+    } catch (error) {
+      console.error("Error loading batches:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const getStateColor = (state: string) => {
     switch (state) {
@@ -138,8 +169,36 @@ export function BatchManagement() {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg shadow p-12 text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
+        <p className="mt-4 text-gray-600">Loading batches...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
+      {/* Batch Selector */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Select Batch to Manage
+        </label>
+        <select
+          value={selectedBatchId || ""}
+          onChange={(e) => setSelectedBatchId(Number(e.target.value))}
+          className="block w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+        >
+          <option value="">All Batches</option>
+          {batches.map((batch) => (
+            <option key={batch.id} value={batch.id}>
+              Batch #{batch.id} - {batch.state} ({batch.participantCount}/24 participants)
+            </option>
+          ))}
+        </select>
+      </div>
+
       {/* Stats Overview */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white rounded-lg shadow p-6">
@@ -188,7 +247,9 @@ export function BatchManagement() {
         </div>
 
         <div className="divide-y divide-gray-200">
-          {batches.map((batch) => {
+          {batches
+            .filter((batch) => !selectedBatchId || batch.id === selectedBatchId)
+            .map((batch) => {
             const nextState = getNextState(batch.state);
             const canProg = canProgress(batch);
 

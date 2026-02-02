@@ -1,171 +1,56 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { Upload, CheckCircle, AlertCircle, FileText, Lock } from "lucide-react";
-
-interface UploadResult {
-  kitId: string;
-  status: "success" | "error";
-  message?: string;
-}
+import { useState, useEffect } from "react";
+import { getCurrentBatchId, getBatchInfo } from "@/lib/contract";
+import { useAccount } from "wagmi";
+import { Link, CheckCircle, AlertCircle, Lock } from "lucide-react";
 
 export function ResultsUploader() {
-  const [selectedBatch, setSelectedBatch] = useState<number>(1);
-  const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadResults, setUploadResults] = useState<UploadResult[]>([]);
-  const [validationError, setValidationError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [loading, setLoading] = useState(true);
+  const [batches, setBatches] = useState<Array<{ id: number; state: string; participantCount: number }>>([]);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
+  const stateNames = ["Pending", "Staged", "Active", "Sequencing", "Completed", "Purged"];
+  const s3BaseUrl = process.env.NEXT_PUBLIC_S3_RESULTS_BASE_URL || "Not configured";
 
-    // Validate file type
-    if (!selectedFile.name.endsWith(".csv")) {
-      setValidationError("Please upload a CSV file");
-      setFile(null);
-      return;
-    }
+  useEffect(() => {
+    loadBatches();
+  }, []);
 
-    // Validate file size (max 100MB)
-    if (selectedFile.size > 100 * 1024 * 1024) {
-      setValidationError("File size must be less than 100MB");
-      setFile(null);
-      return;
-    }
-
-    setFile(selectedFile);
-    setValidationError(null);
-    setUploadResults([]);
-  };
-
-  const validateCSV = async (csvContent: string): Promise<boolean> => {
-    // Check for required headers
-    const lines = csvContent.split("\n");
-    if (lines.length < 2) {
-      setValidationError("CSV file appears to be empty");
-      return false;
-    }
-
-    const headers = lines[0].toLowerCase().split(",").map((h) => h.trim());
-
-    // Must have at least: kitId and some data columns
-    if (!headers.includes("kitid") && !headers.includes("kit_id")) {
-      setValidationError("CSV must contain a 'kitId' or 'kit_id' column");
-      return false;
-    }
-
-    // Validate Kit ID format in data rows
-    const dataRows = lines.slice(1).filter((line) => line.trim());
-    const kitIdIndex = headers.findIndex((h) => h === "kitid" || h === "kit_id");
-
-    for (let i = 0; i < Math.min(5, dataRows.length); i++) {
-      const columns = dataRows[i].split(",");
-      const kitId = columns[kitIdIndex]?.trim();
-      if (!kitId || !/^KIT-[A-Z0-9]{8}$/i.test(kitId)) {
-        setValidationError(
-          `Invalid Kit ID format in row ${i + 2}: ${kitId}. Expected format: KIT-XXXXXXXX`
-        );
-        return false;
-      }
-    }
-
-    return true;
-  };
-
-  const handleUpload = async () => {
-    if (!file) return;
-
-    setUploading(true);
-    setUploadResults([]);
-
+  const loadBatches = async () => {
     try {
-      // Read file content
-      const content = await file.text();
+      setLoading(true);
+      const currentBatchId = await getCurrentBatchId();
 
-      // Validate CSV format
-      const isValid = await validateCSV(content);
-      if (!isValid) {
-        setUploading(false);
-        return;
+      const batchPromises = [];
+      for (let i = 1; i <= currentBatchId; i++) {
+        batchPromises.push(getBatchInfo(i));
       }
 
-      // Parse CSV
-      const lines = content.split("\n");
-      const headers = lines[0].split(",").map((h) => h.trim());
-      const dataRows = lines.slice(1).filter((line) => line.trim());
+      const batchInfos = await Promise.all(batchPromises);
 
-      console.log(`Processing ${dataRows.length} results for batch ${selectedBatch}`);
+      const loadedBatches = batchInfos.map((info, index) => ({
+        id: index + 1,
+        state: stateNames[info.state],
+        participantCount: info.participantCount,
+      }));
 
-      // Process each row
-      const results: UploadResult[] = [];
-      for (const row of dataRows) {
-        const columns = row.split(",");
-        const kitIdIndex = headers.findIndex(
-          (h) => h.toLowerCase() === "kitid" || h.toLowerCase() === "kit_id"
-        );
-        const kitId = columns[kitIdIndex]?.trim();
-
-        if (!kitId) {
-          results.push({
-            kitId: "Unknown",
-            status: "error",
-            message: "Missing Kit ID",
-          });
-          continue;
-        }
-
-        try {
-          // TODO: Encrypt and upload to Nillion
-          // Steps:
-          // 1. Compress CSV data for this participant
-          // 2. Encrypt with their PIN-derived key (we have commitment hash on-chain)
-          // 3. Store in Nillion with store_id
-          // 4. Record completion in smart contract
-          console.log(`Uploading results for ${kitId}`);
-          await new Promise((resolve) => setTimeout(resolve, 50));
-
-          results.push({
-            kitId,
-            status: "success",
-          });
-        } catch (error) {
-          results.push({
-            kitId,
-            status: "error",
-            message: error instanceof Error ? error.message : "Upload failed",
-          });
-        }
-      }
-
-      setUploadResults(results);
-
-      // Show summary
-      const successCount = results.filter((r) => r.status === "success").length;
-      const errorCount = results.filter((r) => r.status === "error").length;
-
-      alert(
-        `Upload complete!\n\nSuccessful: ${successCount}\nFailed: ${errorCount}\n\nResults are now encrypted and available for participants to download.`
-      );
+      setBatches(loadedBatches.filter(b => b.state === "Sequencing" || b.state === "Completed"));
     } catch (error) {
-      console.error("Upload error:", error);
-      setValidationError(
-        error instanceof Error ? error.message : "Upload failed"
-      );
+      console.error("Error loading batches:", error);
     } finally {
-      setUploading(false);
+      setLoading(false);
     }
   };
 
-  const handleReset = () => {
-    setFile(null);
-    setUploadResults([]);
-    setValidationError(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg shadow p-12 text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
+        <p className="mt-4 text-gray-600">Loading batches...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -173,193 +58,119 @@ export function ResultsUploader() {
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex gap-3">
         <Lock className="w-6 h-6 text-blue-600 flex-shrink-0" />
         <div>
-          <h3 className="font-semibold text-blue-900 mb-1">Results Upload</h3>
+          <h3 className="font-semibold text-blue-900 mb-1">Results Storage Information</h3>
           <p className="text-sm text-blue-700 mb-2">
-            Upload sequencing results for a completed batch. Results will be encrypted
-            and stored in Nillion, accessible only to participants with their PIN.
+            DNA sequencing results are stored in S3 and accessed using a standardized path structure.
+            No per-batch configuration is needed - the system automatically constructs the correct path.
           </p>
           <p className="text-xs text-blue-600 font-medium">
-            CSV Format: Must include a &quot;kitId&quot; column (KIT-XXXXXXXX format).
-            All other columns will be preserved in the participant&apos;s result file.
+            File path pattern: <code className="bg-blue-100 px-1 rounded">{'{S3_BASE_URL}'}/{'{batch_id}'}/{'{kit_id}'}.csv</code>
           </p>
         </div>
       </div>
 
-      {/* Format Example */}
+      {/* S3 Configuration Display */}
       <div className="bg-white rounded-lg shadow p-6">
-        <h4 className="text-sm font-semibold text-gray-900 mb-3">
-          Expected CSV Format:
-        </h4>
-        <div className="bg-gray-50 rounded p-3 font-mono text-xs overflow-x-auto">
-          <pre>
-            {`kitId,rsID,Chromosome,Position,Reference,Alternate,GenotypeProbability,pValue,Trait
-KIT-ABC12345,rs123,chr1,12345,A,G,0.75,0.0001,Diabetes risk
-KIT-ABC12345,rs456,chr2,67890,C,T,0.82,0.002,Height variation
-...`}
-          </pre>
+        <h2 className="text-xl font-bold text-gray-900 mb-6">Storage Configuration</h2>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              S3 Base URL
+            </label>
+            <div className="px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg font-mono text-sm">
+              {s3BaseUrl}
+            </div>
+            <p className="mt-2 text-xs text-gray-500">
+              Configured via <code className="bg-gray-100 px-1 rounded">S3_RESULTS_BASE_URL</code> environment variable
+            </p>
+          </div>
         </div>
-        <p className="text-xs text-gray-600 mt-2">
-          Each row should contain data for one SNP. Multiple rows per Kit ID are
-          expected.
-        </p>
       </div>
 
-      {/* Upload Controls */}
+      {/* Batch Status */}
       <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-bold text-gray-900 mb-4">Batches Ready for Results</h2>
+
+        {batches.length === 0 ? (
+          <p className="text-gray-500 text-center py-8">
+            No batches in Sequencing or Completed state
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {batches.map((batch) => (
+              <div key={batch.id} className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-gray-900">Batch #{batch.id}</h3>
+                    <p className="text-sm text-gray-600 mt-1">
+                      State: <span className="font-medium">{batch.state}</span> •
+                      Participants: <span className="font-medium">{batch.participantCount}</span>
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-gray-500 font-mono">Results path:</p>
+                    <p className="text-xs font-mono text-indigo-600">
+                      /{batch.id}/[kit_id].csv
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Example Configuration */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">S3 Bucket Setup Guide</h3>
+
         <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select Batch
-              </label>
-              <select
-                value={selectedBatch}
-                onChange={(e) => {
-                  setSelectedBatch(Number(e.target.value));
-                  handleReset();
-                }}
-                disabled={uploading}
-                className="w-full sm:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:opacity-50"
-              >
-                <option value={1}>Batch #1 (Sequencing)</option>
-                <option value={2}>Batch #2 (Completed)</option>
-              </select>
+          <div>
+            <h4 className="text-sm font-semibold text-gray-700 mb-2">1. S3 Bucket Structure</h4>
+            <div className="bg-gray-50 rounded p-3 font-mono text-xs overflow-x-auto">
+              <pre>{`my-results-bucket/
+├── 1/
+│   ├── KIT-ABC12345.csv
+│   ├── KIT-DEF67890.csv
+│   └── ...
+├── 2/
+│   ├── KIT-GHI24680.csv
+│   └── ...
+└── 3/
+    └── ...`}</pre>
+            </div>
+            <p className="mt-2 text-xs text-gray-500">
+              Results are organized by batch ID, with each kit's results in a separate CSV file
+            </p>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-semibold text-gray-700 mb-2">2. CSV File Format (per kit)</h4>
+            <div className="bg-gray-50 rounded p-3 font-mono text-xs overflow-x-auto">
+              <pre>{`rsID,Chromosome,Position,Reference,Alternate,GenotypeProbability,pValue,Trait
+rs123,chr1,12345,A,G,0.75,0.0001,Diabetes risk
+rs456,chr2,67890,C,T,0.82,0.002,Height variation
+...`}</pre>
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Upload Results CSV
-            </label>
-            <div className="flex items-center gap-3">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv"
-                onChange={handleFileSelect}
-                disabled={uploading}
-                className="hidden"
-              />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors disabled:opacity-50"
-              >
-                <FileText className="w-5 h-5" />
-                Choose File
-              </button>
-              {file && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-700">{file.name}</span>
-                  <span className="text-xs text-gray-500">
-                    ({(file.size / 1024).toFixed(1)} KB)
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {validationError && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex gap-2">
-              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-              <p className="text-sm text-red-700">{validationError}</p>
-            </div>
-          )}
-
-          <div className="flex gap-3 pt-4">
-            <button
-              onClick={handleUpload}
-              disabled={!file || uploading || !!validationError}
-              className="flex items-center gap-2 px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Upload className="w-5 h-5" />
-              {uploading ? "Uploading & Encrypting..." : "Upload Results"}
-            </button>
-
-            {(file || uploadResults.length > 0) && (
-              <button
-                onClick={handleReset}
-                disabled={uploading}
-                className="px-6 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-medium transition-colors disabled:opacity-50"
-              >
-                Reset
-              </button>
-            )}
+            <h4 className="text-sm font-semibold text-gray-700 mb-2">3. Access Control</h4>
+            <p className="text-sm text-gray-600 mb-2">
+              Recommended approaches for secure access:
+            </p>
+            <ul className="mt-2 text-sm text-gray-600 list-disc list-inside space-y-1">
+              <li>API generates pre-signed URLs per participant (recommended)</li>
+              <li>CloudFront distribution with signed URLs</li>
+              <li>Lambda@Edge for authentication at the edge</li>
+            </ul>
+            <p className="mt-2 text-xs text-gray-500">
+              Note: Results are fetched server-side by the API after PIN verification
+            </p>
           </div>
         </div>
       </div>
-
-      {/* Upload Results */}
-      {uploadResults.length > 0 && (
-        <div className="bg-white rounded-lg shadow">
-          <div className="p-6 border-b border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">
-              Upload Results
-            </h3>
-            <p className="text-sm text-gray-600">
-              Processed {uploadResults.length} participants
-            </p>
-          </div>
-
-          <div className="p-6">
-            {/* Summary Stats */}
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <div className="bg-green-50 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-1">
-                  <CheckCircle className="w-5 h-5 text-green-600" />
-                  <span className="text-sm font-medium text-green-900">
-                    Successful
-                  </span>
-                </div>
-                <p className="text-2xl font-bold text-green-600">
-                  {uploadResults.filter((r) => r.status === "success").length}
-                </p>
-              </div>
-
-              <div className="bg-red-50 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-1">
-                  <AlertCircle className="w-5 h-5 text-red-600" />
-                  <span className="text-sm font-medium text-red-900">Failed</span>
-                </div>
-                <p className="text-2xl font-bold text-red-600">
-                  {uploadResults.filter((r) => r.status === "error").length}
-                </p>
-              </div>
-            </div>
-
-            {/* Error Details */}
-            {uploadResults.some((r) => r.status === "error") && (
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
-                  <h4 className="text-sm font-semibold text-gray-900">Errors</h4>
-                </div>
-                <div className="max-h-64 overflow-y-auto">
-                  {uploadResults
-                    .filter((r) => r.status === "error")
-                    .map((result, idx) => (
-                      <div
-                        key={idx}
-                        className="px-4 py-3 border-b border-gray-100 last:border-b-0"
-                      >
-                        <div className="flex items-start gap-2">
-                          <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-                          <div>
-                            <p className="text-sm font-mono font-medium text-gray-900">
-                              {result.kitId}
-                            </p>
-                            <p className="text-xs text-red-600 mt-1">
-                              {result.message}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

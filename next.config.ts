@@ -20,10 +20,15 @@ const nextConfig: NextConfig = {
       crypto: false,
     };
 
-    // Ignore React Native dependencies in MetaMask SDK
+    // Ignore React Native dependencies in MetaMask SDK and optional wagmi connectors
     config.resolve.alias = {
       ...config.resolve.alias,
       '@react-native-async-storage/async-storage': false,
+      '@gemini-wallet/core': false,
+      'porto': false,
+      'porto/internal': false,
+      '@safe-global/safe-apps-sdk': false,
+      '@safe-global/safe-apps-provider': false,
     };
 
     return config;

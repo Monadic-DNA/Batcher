@@ -25,30 +25,37 @@ export function ShippingDataViewer() {
   const handleFetchData = async () => {
     setLoading(true);
     try {
-      // TODO: Fetch encrypted shipping data from Nillion
-      // This should require admin delegation token
-      console.log("Fetching shipping data for batch", selectedBatch);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      // Mock data
-      setShippingData([
-        {
-          walletAddress: "0xA1B2C3D4E5F6...",
-          batchId: selectedBatch,
-          email: "user@example.com",
-          name: "John Doe",
-          address: "123 Main St",
-          city: "New York",
-          state: "NY",
-          zip: "10001",
-          country: "United States",
-          retrievedAt: new Date().toISOString(),
+      // Fetch shipping data from API
+      // Access control handled by Nillion admin API key (server-side)
+      const response = await fetch("/api/admin/shipping", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      ]);
+        body: JSON.stringify({
+          batchId: selectedBatch,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to fetch shipping data");
+      }
+
+      const data = await response.json();
+      setShippingData(data.shippingData);
       setShowData(true);
+
+      if (data.shippingData.length === 0) {
+        alert("No shipping data found for this batch");
+      }
     } catch (error) {
       console.error("Error fetching shipping data:", error);
-      alert("Failed to fetch shipping data");
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch shipping data"
+      );
     } finally {
       setLoading(false);
     }
@@ -65,16 +72,36 @@ export function ShippingDataViewer() {
 
     setLoading(true);
     try {
-      // TODO: Delete shipping data from Nillion
-      console.log("Deleting shipping data for batch", selectedBatch);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Delete shipping data via API
+      // Access control handled by Nillion admin API key (server-side)
+      const response = await fetch("/api/admin/shipping/delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          batchId: selectedBatch,
+        }),
+      });
 
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to delete shipping data");
+      }
+
+      const data = await response.json();
       setShippingData([]);
       setShowData(false);
-      alert("Shipping data deleted successfully!");
+      alert(
+        `Shipping data deleted successfully! Deleted ${data.deletedCount} of ${data.totalParticipants} records.`
+      );
     } catch (error) {
       console.error("Error deleting shipping data:", error);
-      alert("Failed to delete shipping data");
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to delete shipping data"
+      );
     } finally {
       setLoading(false);
     }
