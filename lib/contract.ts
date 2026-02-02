@@ -7,23 +7,28 @@ const BATCH_STATE_MACHINE_ABI = [
   "function storeCommitmentHash(uint256 batchId, bytes32 commitmentHash) external",
   "function slashUser(uint256 batchId, address user) external",
   "function canStillPay(uint256 batchId, address user) external view returns (bool)",
-  "function getBatchInfo(uint256 batchId) external view returns (uint8 state, uint256 participantCount, uint256 createdAt, uint256 stateChangedAt)",
+  "function getBatchInfo(uint256 batchId) external view returns (uint8 state, uint256 participantCount, uint256 maxBatchSize, uint256 createdAt, uint256 stateChangedAt)",
   "function getParticipantInfo(uint256 batchId, address user) external view returns (bytes32 commitmentHash, uint256 depositAmount, uint256 balanceAmount, bool balancePaid, bool slashed, uint256 joinedAt, uint256 paymentDeadline)",
   "function isParticipant(uint256 batchId, address user) external view returns (bool)",
   "function getParticipantAddress(uint256 batchId, uint256 index) external view returns (address)",
   "function currentBatchId() external view returns (uint256)",
   "function fullPrice() external view returns (uint256)",
+  "function defaultBatchSize() external view returns (uint256)",
+  "function setDefaultBatchSize(uint256 newSize) external",
+  "function setBatchSize(uint256 batchId, uint256 newSize) external",
   "function transitionBatchState(uint256 batchId, uint8 newState) external",
   "function updateFullPrice(uint256 newPrice) external",
   "function withdrawFunds(uint256 amount) external",
   "function owner() external view returns (address)",
-  "event BatchCreated(uint256 indexed batchId, uint256 timestamp)",
+  "event BatchCreated(uint256 indexed batchId, uint256 maxBatchSize, uint256 timestamp)",
   "event UserJoined(uint256 indexed batchId, address indexed user, uint256 depositAmount)",
   "event BalancePaymentReceived(uint256 indexed batchId, address indexed user, uint256 amount)",
   "event UserSlashed(uint256 indexed batchId, address indexed user, uint256 penaltyAmount)",
   "event BatchStateChanged(uint256 indexed batchId, uint8 newState, uint256 timestamp)",
   "event CommitmentHashStored(uint256 indexed batchId, address indexed user, bytes32 commitmentHash)",
   "event FundsWithdrawn(address indexed admin, uint256 amount)",
+  "event DefaultBatchSizeChanged(uint256 oldSize, uint256 newSize, uint256 timestamp)",
+  "event BatchSizeChanged(uint256 indexed batchId, uint256 oldSize, uint256 newSize, uint256 timestamp)",
 ];
 
 export enum BatchState {
@@ -47,6 +52,9 @@ export const BATCH_STATE_NAMES: Record<BatchState, string> = {
 export interface BatchInfo {
   state: BatchState;
   participantCount: number;
+  maxBatchSize: number;
+  createdAt: number;
+  stateChangedAt: number;
 }
 
 export interface ParticipantInfo {
@@ -140,15 +148,42 @@ export async function getCurrentBatchId(): Promise<number> {
 }
 
 /**
- * Get batch info (state, participant count, timestamps)
+ * Get batch info (state, participant count, max size, timestamps)
  */
 export async function getBatchInfo(batchId: number): Promise<BatchInfo> {
   const contract = getContract();
-  const info = await contract.getBatchInfo(batchId);
-  return {
-    state: Number(info.state) as BatchState,
-    participantCount: Number(info.participantCount),
-  };
+
+  try {
+    // Try new contract version with maxBatchSize
+    const info = await contract.getBatchInfo(batchId);
+    return {
+      state: Number(info[0]) as BatchState,
+      participantCount: Number(info[1]),
+      maxBatchSize: Number(info[2]),
+      createdAt: Number(info[3]),
+      stateChangedAt: Number(info[4]),
+    };
+  } catch (error: any) {
+    // Fallback for old contract version without maxBatchSize
+    if (error.code === 'BAD_DATA') {
+      // Use old ABI temporarily
+      const oldABI = ["function getBatchInfo(uint256 batchId) external view returns (uint8 state, uint256 participantCount, uint256 createdAt, uint256 stateChangedAt)"];
+      const oldContract = new ethers.Contract(
+        process.env.NEXT_PUBLIC_CONTRACT_ADDRESS!,
+        oldABI,
+        getProvider()
+      );
+      const info = await oldContract.getBatchInfo(batchId);
+      return {
+        state: Number(info[0]) as BatchState,
+        participantCount: Number(info[1]),
+        maxBatchSize: 24, // Default fallback
+        createdAt: Number(info[2]),
+        stateChangedAt: Number(info[3]),
+      };
+    }
+    throw error;
+  }
 }
 
 /**
@@ -309,5 +344,36 @@ export async function slashUser(
 export async function withdrawFunds(amount: bigint, signer: ethers.Signer) {
   const contract = getContractWithSigner(signer);
   const tx = await contract.withdrawFunds(amount);
+  return await tx.wait();
+}
+
+/**
+ * Get default batch size
+ */
+export async function getDefaultBatchSize(): Promise<number> {
+  const contract = getContract();
+  const size = await contract.defaultBatchSize();
+  return Number(size);
+}
+
+/**
+ * Set default batch size (admin only)
+ */
+export async function setDefaultBatchSize(newSize: number, signer: ethers.Signer) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.setDefaultBatchSize(newSize);
+  return await tx.wait();
+}
+
+/**
+ * Set batch size for a specific batch (admin only)
+ */
+export async function setBatchSize(
+  batchId: number,
+  newSize: number,
+  signer: ethers.Signer
+) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.setBatchSize(batchId, newSize);
   return await tx.wait();
 }

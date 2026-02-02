@@ -37,6 +37,7 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
         uint256 batchId;
         BatchState state;
         uint256 participantCount;
+        uint256 maxBatchSize; // Size for this specific batch
         mapping(uint256 => Participant) participants; // index => participant
         mapping(address => uint256) participantIndex; // wallet => index
         uint256 createdAt;
@@ -44,7 +45,6 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
     }
 
     // Constants
-    uint256 public constant MAX_BATCH_SIZE = 24;
     uint256 public constant DEPOSIT_PERCENTAGE = 10; // 10% deposit
     uint256 public constant BALANCE_PERCENTAGE = 90; // 90% balance
     uint256 public constant PAYMENT_WINDOW = 7 days;
@@ -55,18 +55,23 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
     // Pricing (can be updated by owner)
     uint256 public fullPrice = 0.1 ether; // Example: 0.1 ETH or equivalent USDC
 
+    // Batch size configuration
+    uint256 public defaultBatchSize = 24; // Default size for new batches
+
     // State
     uint256 public currentBatchId;
     mapping(uint256 => Batch) public batches;
 
     // Events
-    event BatchCreated(uint256 indexed batchId, uint256 timestamp);
+    event BatchCreated(uint256 indexed batchId, uint256 maxBatchSize, uint256 timestamp);
     event UserJoined(uint256 indexed batchId, address indexed user, uint256 depositAmount);
     event BatchStateChanged(uint256 indexed batchId, BatchState newState, uint256 timestamp);
     event BalancePaymentReceived(uint256 indexed batchId, address indexed user, uint256 amount);
     event UserSlashed(uint256 indexed batchId, address indexed user, uint256 penaltyAmount);
     event CommitmentHashStored(uint256 indexed batchId, address indexed user, bytes32 commitmentHash);
     event FundsWithdrawn(address indexed admin, uint256 amount);
+    event DefaultBatchSizeChanged(uint256 oldSize, uint256 newSize, uint256 timestamp);
+    event BatchSizeChanged(uint256 indexed batchId, uint256 oldSize, uint256 newSize, uint256 timestamp);
 
     constructor() Ownable(msg.sender) {
         // Initialize first batch
@@ -74,9 +79,10 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
         Batch storage batch = batches[currentBatchId];
         batch.batchId = currentBatchId;
         batch.state = BatchState.Pending;
+        batch.maxBatchSize = defaultBatchSize;
         batch.createdAt = block.timestamp;
         batch.stateChangedAt = block.timestamp;
-        emit BatchCreated(currentBatchId, block.timestamp);
+        emit BatchCreated(currentBatchId, defaultBatchSize, block.timestamp);
     }
 
     /**
@@ -85,7 +91,7 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
     function joinBatch() external payable nonReentrant {
         Batch storage batch = batches[currentBatchId];
         require(batch.state == BatchState.Pending, "Batch not accepting participants");
-        require(batch.participantCount < MAX_BATCH_SIZE, "Batch is full");
+        require(batch.participantCount < batch.maxBatchSize, "Batch is full");
         require(batch.participantIndex[msg.sender] == 0, "Already joined this batch");
 
         uint256 depositAmount = (fullPrice * DEPOSIT_PERCENTAGE) / 100;
@@ -114,7 +120,7 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
         }
 
         // Auto-transition to Staged if batch is full
-        if (batch.participantCount == MAX_BATCH_SIZE) {
+        if (batch.participantCount == batch.maxBatchSize) {
             _transitionBatchState(currentBatchId, BatchState.Staged);
         }
     }
@@ -209,9 +215,10 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
         Batch storage newBatch = batches[currentBatchId];
         newBatch.batchId = currentBatchId;
         newBatch.state = BatchState.Pending;
+        newBatch.maxBatchSize = defaultBatchSize;
         newBatch.createdAt = block.timestamp;
         newBatch.stateChangedAt = block.timestamp;
-        emit BatchCreated(currentBatchId, block.timestamp);
+        emit BatchCreated(currentBatchId, defaultBatchSize, block.timestamp);
     }
 
     /**
@@ -276,12 +283,13 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
         returns (
             BatchState state,
             uint256 participantCount,
+            uint256 maxBatchSize,
             uint256 createdAt,
             uint256 stateChangedAt
         )
     {
         Batch storage batch = batches[batchId];
-        return (batch.state, batch.participantCount, batch.createdAt, batch.stateChangedAt);
+        return (batch.state, batch.participantCount, batch.maxBatchSize, batch.createdAt, batch.stateChangedAt);
     }
 
     /**
@@ -329,5 +337,37 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
     function getParticipantAddress(uint256 batchId, uint256 index) external view returns (address) {
         require(index > 0 && index <= batches[batchId].participantCount, "Invalid index");
         return batches[batchId].participants[index].wallet;
+    }
+
+    /**
+     * @dev Update the default batch size for future batches
+     * @param newSize The new default batch size (must be > 0)
+     */
+    function setDefaultBatchSize(uint256 newSize) external onlyOwner {
+        require(newSize > 0, "Batch size must be greater than 0");
+        uint256 oldSize = defaultBatchSize;
+        defaultBatchSize = newSize;
+        emit DefaultBatchSizeChanged(oldSize, newSize, block.timestamp);
+    }
+
+    /**
+     * @dev Update the batch size for a specific pending batch
+     * @param batchId The batch ID to update
+     * @param newSize The new batch size for this batch
+     */
+    function setBatchSize(uint256 batchId, uint256 newSize) external onlyOwner {
+        Batch storage batch = batches[batchId];
+        require(batch.state == BatchState.Pending, "Can only modify pending batches");
+        require(newSize > 0, "Batch size must be greater than 0");
+        require(newSize >= batch.participantCount, "Cannot set size below current participant count");
+
+        uint256 oldSize = batch.maxBatchSize;
+        batch.maxBatchSize = newSize;
+        emit BatchSizeChanged(batchId, oldSize, newSize, block.timestamp);
+
+        // Auto-transition to Staged if batch is now full
+        if (batch.participantCount == newSize) {
+            _transitionBatchState(batchId, BatchState.Staged);
+        }
     }
 }

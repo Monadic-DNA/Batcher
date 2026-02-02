@@ -6,11 +6,13 @@ import { BatchManagement } from "@/components/admin/BatchManagement";
 import { ShippingDataViewer } from "@/components/admin/ShippingDataViewer";
 import { MetadataExporter } from "@/components/admin/MetadataExporter";
 import { ResultsUploader } from "@/components/admin/ResultsUploader";
+import { BatchSizeConfig } from "@/components/admin/BatchSizeConfig";
 import {
   Users,
   Package,
   Download,
   Upload,
+  Settings,
 } from "lucide-react";
 
 function ConnectButton() {
@@ -26,7 +28,7 @@ function ConnectButton() {
   );
 }
 
-type Tab = "batches" | "shipping" | "exporter" | "uploader";
+type Tab = "batches" | "shipping" | "exporter" | "uploader" | "config";
 
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<Tab>("batches");
@@ -35,6 +37,7 @@ export default function AdminPage() {
 
   const tabs = [
     { id: "batches" as Tab, name: "Batch Management", icon: Users },
+    { id: "config" as Tab, name: "Batch Size Config", icon: Settings },
     { id: "shipping" as Tab, name: "Shipping Data", icon: Package },
     { id: "exporter" as Tab, name: "Metadata Export", icon: Download },
     { id: "uploader" as Tab, name: "Results Upload", icon: Upload },
@@ -135,6 +138,7 @@ export default function AdminPage() {
       {/* Tab Content */}
       <div className="space-y-6">
         {activeTab === "batches" && <BatchManagement />}
+        {activeTab === "config" && <BatchSizeConfig />}
         {activeTab === "shipping" && <ShippingDataViewer />}
         {activeTab === "exporter" && <MetadataExporter />}
         {activeTab === "uploader" && <ResultsUploader />}
