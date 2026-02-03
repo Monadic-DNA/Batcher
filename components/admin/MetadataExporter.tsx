@@ -5,8 +5,8 @@ import { Download, FileText, AlertCircle } from "lucide-react";
 
 interface ParticipantMetadata {
   kitId: string;
-  age?: number;
-  sex?: string;
+  yearOfBirth?: number;
+  sexAssignedAtBirth?: string;
   ethnicity?: string;
 }
 
@@ -14,8 +14,8 @@ export function MetadataExporter() {
   const [selectedBatch, setSelectedBatch] = useState<number>(1);
   const [metadata, setMetadata] = useState<ParticipantMetadata[]>([]);
   const [loading, setLoading] = useState(false);
-  const [includeAge, setIncludeAge] = useState(true);
-  const [includeSex, setIncludeSex] = useState(true);
+  const [includeYearOfBirth, setIncludeYearOfBirth] = useState(true);
+  const [includeSexAssignedAtBirth, setIncludeSexAssignedAtBirth] = useState(true);
   const [includeEthnicity, setIncludeEthnicity] = useState(true);
 
   const handleFetchMetadata = async () => {
@@ -31,10 +31,10 @@ export function MetadataExporter() {
         { length: 24 },
         () => ({
           kitId: `KIT-${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
-          age: Math.random() > 0.3 ? Math.floor(Math.random() * 50) + 20 : undefined,
-          sex:
+          yearOfBirth: Math.random() > 0.3 ? Math.floor(Math.random() * 50) + 1950 : undefined,
+          sexAssignedAtBirth:
             Math.random() > 0.2
-              ? ["Male", "Female", "Other"][Math.floor(Math.random() * 3)]
+              ? ["Male", "Female"][Math.floor(Math.random() * 2)]
               : undefined,
           ethnicity:
             Math.random() > 0.3
@@ -59,15 +59,15 @@ export function MetadataExporter() {
 
     // Build headers based on selected fields
     const headers = ["Kit ID"];
-    if (includeAge) headers.push("Age");
-    if (includeSex) headers.push("Sex");
+    if (includeYearOfBirth) headers.push("Year of Birth");
+    if (includeSexAssignedAtBirth) headers.push("Sex Assigned at Birth");
     if (includeEthnicity) headers.push("Ethnicity");
 
     // Build rows
     const rows = metadata.map((m) => {
       const row = [m.kitId];
-      if (includeAge) row.push(m.age?.toString() || "Not provided");
-      if (includeSex) row.push(m.sex || "Not provided");
+      if (includeYearOfBirth) row.push(m.yearOfBirth?.toString() || "Not provided");
+      if (includeSexAssignedAtBirth) row.push(m.sexAssignedAtBirth || "Not provided");
       if (includeEthnicity) row.push(m.ethnicity || "Not provided");
       return row;
     });
@@ -89,17 +89,18 @@ export function MetadataExporter() {
     if (metadata.length === 0) return;
 
     // Calculate statistics
+    const currentYear = new Date().getFullYear();
     const stats = {
       totalParticipants: metadata.length,
-      ageProvided: metadata.filter((m) => m.age).length,
-      sexProvided: metadata.filter((m) => m.sex).length,
+      yearOfBirthProvided: metadata.filter((m) => m.yearOfBirth).length,
+      sexAssignedAtBirthProvided: metadata.filter((m) => m.sexAssignedAtBirth).length,
       ethnicityProvided: metadata.filter((m) => m.ethnicity).length,
       averageAge:
-        metadata.filter((m) => m.age).reduce((sum, m) => sum + (m.age || 0), 0) /
-        metadata.filter((m) => m.age).length,
+        metadata.filter((m) => m.yearOfBirth).reduce((sum, m) => sum + (currentYear - (m.yearOfBirth || 0)), 0) /
+        metadata.filter((m) => m.yearOfBirth).length,
       sexDistribution: metadata.reduce(
         (acc, m) => {
-          if (m.sex) acc[m.sex] = (acc[m.sex] || 0) + 1;
+          if (m.sexAssignedAtBirth) acc[m.sexAssignedAtBirth] = (acc[m.sexAssignedAtBirth] || 0) + 1;
           return acc;
         },
         {} as Record<string, number>
@@ -120,17 +121,17 @@ Generated: ${new Date().toLocaleString()}
 OVERVIEW
 ========
 Total Participants: ${stats.totalParticipants}
-Age Data Provided: ${stats.ageProvided} (${((stats.ageProvided / stats.totalParticipants) * 100).toFixed(1)}%)
-Sex Data Provided: ${stats.sexProvided} (${((stats.sexProvided / stats.totalParticipants) * 100).toFixed(1)}%)
+Year of Birth Provided: ${stats.yearOfBirthProvided} (${((stats.yearOfBirthProvided / stats.totalParticipants) * 100).toFixed(1)}%)
+Sex Assigned at Birth Provided: ${stats.sexAssignedAtBirthProvided} (${((stats.sexAssignedAtBirthProvided / stats.totalParticipants) * 100).toFixed(1)}%)
 Ethnicity Data Provided: ${stats.ethnicityProvided} (${((stats.ethnicityProvided / stats.totalParticipants) * 100).toFixed(1)}%)
 
 STATISTICS
 ==========
 Average Age: ${stats.averageAge.toFixed(1)} years
 
-Sex Distribution:
+Sex Assigned at Birth Distribution:
 ${Object.entries(stats.sexDistribution)
-  .map(([sex, count]) => `  ${sex}: ${count} (${((count / stats.sexProvided) * 100).toFixed(1)}%)`)
+  .map(([sex, count]) => `  ${sex}: ${count} (${((count / stats.sexAssignedAtBirthProvided) * 100).toFixed(1)}%)`)
   .join("\n")}
 
 Ethnicity Distribution:
@@ -164,7 +165,7 @@ individual metadata to wallet addresses or Kit IDs.
         <div>
           <h3 className="font-semibold text-blue-900 mb-1">Lab Metadata Export</h3>
           <p className="text-sm text-blue-700">
-            Export optional metadata (age, sex, ethnicity) linked to Kit IDs for lab
+            Export optional metadata (year of birth, sex assigned at birth, ethnicity) linked to Kit IDs for lab
             analysis. This data helps improve sequencing quality and result
             interpretation, but is completely optional and provided at the
             participant&apos;s discretion.
@@ -212,21 +213,21 @@ individual metadata to wallet addresses or Kit IDs.
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={includeAge}
-                  onChange={(e) => setIncludeAge(e.target.checked)}
+                  checked={includeYearOfBirth}
+                  onChange={(e) => setIncludeYearOfBirth(e.target.checked)}
                   className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
                 />
-                <span className="text-sm text-gray-700">Age</span>
+                <span className="text-sm text-gray-700">Year of Birth</span>
               </label>
 
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={includeSex}
-                  onChange={(e) => setIncludeSex(e.target.checked)}
+                  checked={includeSexAssignedAtBirth}
+                  onChange={(e) => setIncludeSexAssignedAtBirth(e.target.checked)}
                   className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
                 />
-                <span className="text-sm text-gray-700">Sex</span>
+                <span className="text-sm text-gray-700">Sex Assigned at Birth</span>
               </label>
 
               <label className="flex items-center gap-2 cursor-pointer">
@@ -253,8 +254,8 @@ individual metadata to wallet addresses or Kit IDs.
             <p className="text-sm text-gray-600">
               {metadata.length} participants • Data completion:{" "}
               {(
-                ((metadata.filter((m) => m.age).length +
-                  metadata.filter((m) => m.sex).length +
+                ((metadata.filter((m) => m.yearOfBirth).length +
+                  metadata.filter((m) => m.sexAssignedAtBirth).length +
                   metadata.filter((m) => m.ethnicity).length) /
                   (metadata.length * 3)) *
                 100
@@ -290,11 +291,11 @@ individual metadata to wallet addresses or Kit IDs.
                 <thead>
                   <tr className="border-b border-gray-300">
                     <th className="text-left py-2 px-3 font-medium">Kit ID</th>
-                    {includeAge && (
-                      <th className="text-left py-2 px-3 font-medium">Age</th>
+                    {includeYearOfBirth && (
+                      <th className="text-left py-2 px-3 font-medium">Year of Birth</th>
                     )}
-                    {includeSex && (
-                      <th className="text-left py-2 px-3 font-medium">Sex</th>
+                    {includeSexAssignedAtBirth && (
+                      <th className="text-left py-2 px-3 font-medium">Sex Assigned at Birth</th>
                     )}
                     {includeEthnicity && (
                       <th className="text-left py-2 px-3 font-medium">Ethnicity</th>
@@ -305,10 +306,10 @@ individual metadata to wallet addresses or Kit IDs.
                   {metadata.slice(0, 5).map((m, idx) => (
                     <tr key={idx} className="border-b border-gray-200">
                       <td className="py-2 px-3 font-mono">{m.kitId}</td>
-                      {includeAge && (
-                        <td className="py-2 px-3">{m.age || "N/A"}</td>
+                      {includeYearOfBirth && (
+                        <td className="py-2 px-3">{m.yearOfBirth || "N/A"}</td>
                       )}
-                      {includeSex && <td className="py-2 px-3">{m.sex || "N/A"}</td>}
+                      {includeSexAssignedAtBirth && <td className="py-2 px-3">{m.sexAssignedAtBirth || "N/A"}</td>}
                       {includeEthnicity && (
                         <td className="py-2 px-3">{m.ethnicity || "N/A"}</td>
                       )}
@@ -319,8 +320,8 @@ individual metadata to wallet addresses or Kit IDs.
                       <td
                         colSpan={
                           1 +
-                          (includeAge ? 1 : 0) +
-                          (includeSex ? 1 : 0) +
+                          (includeYearOfBirth ? 1 : 0) +
+                          (includeSexAssignedAtBirth ? 1 : 0) +
                           (includeEthnicity ? 1 : 0)
                         }
                         className="py-2 px-3 text-gray-500 italic text-center"

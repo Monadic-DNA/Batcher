@@ -4,8 +4,7 @@ import { useState } from "react";
 import { Package, Eye, EyeOff, AlertTriangle, Trash2 } from "lucide-react";
 
 interface ShippingData {
-  walletAddress: string;
-  batchId: number;
+  kitId: string;
   email: string;
   name: string;
   address: string;
@@ -13,11 +12,10 @@ interface ShippingData {
   state: string;
   zip: string;
   country: string;
-  retrievedAt: string;
+  storedAt: string;
 }
 
 export function ShippingDataViewer() {
-  const [selectedBatch, setSelectedBatch] = useState<number>(1);
   const [shippingData, setShippingData] = useState<ShippingData[]>([]);
   const [loading, setLoading] = useState(false);
   const [showData, setShowData] = useState(false);
@@ -32,9 +30,6 @@ export function ShippingDataViewer() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          batchId: selectedBatch,
-        }),
       });
 
       if (!response.ok) {
@@ -47,7 +42,7 @@ export function ShippingDataViewer() {
       setShowData(true);
 
       if (data.shippingData.length === 0) {
-        alert("No shipping data found for this batch");
+        alert("No shipping data found");
       }
     } catch (error) {
       console.error("Error fetching shipping data:", error);
@@ -64,7 +59,7 @@ export function ShippingDataViewer() {
   const handleDeleteData = async () => {
     if (
       !confirm(
-        "Are you sure you want to delete all shipping data for this batch? This action cannot be undone and should only be done after kits have been shipped."
+        "Are you sure you want to delete all shipping data? This action cannot be undone and should only be done after kits have been shipped."
       )
     ) {
       return;
@@ -79,9 +74,6 @@ export function ShippingDataViewer() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          batchId: selectedBatch,
-        }),
       });
 
       if (!response.ok) {
@@ -93,7 +85,7 @@ export function ShippingDataViewer() {
       setShippingData([]);
       setShowData(false);
       alert(
-        `Shipping data deleted successfully! Deleted ${data.deletedCount} of ${data.totalParticipants} records.`
+        `Shipping data deleted successfully! Deleted ${data.deletedCount} records.`
       );
     } catch (error) {
       console.error("Error deleting shipping data:", error);
@@ -111,7 +103,7 @@ export function ShippingDataViewer() {
     if (shippingData.length === 0) return;
 
     const headers = [
-      "Wallet Address",
+      "Kit ID",
       "Email",
       "Name",
       "Address",
@@ -121,7 +113,7 @@ export function ShippingDataViewer() {
       "Country",
     ];
     const rows = shippingData.map((d) => [
-      d.walletAddress,
+      d.kitId,
       d.email,
       d.name,
       d.address,
@@ -137,7 +129,7 @@ export function ShippingDataViewer() {
 
     const a = document.createElement("a");
     a.href = url;
-    a.download = `batch-${selectedBatch}-shipping-${new Date().toISOString().split("T")[0]}.csv`;
+    a.download = `shipping-data-${new Date().toISOString().split("T")[0]}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -161,25 +153,13 @@ export function ShippingDataViewer() {
         </div>
       </div>
 
-      {/* Batch Selection */}
+      {/* Fetch Data */}
       <div className="bg-white rounded-lg shadow p-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
           <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Select Batch
-            </label>
-            <select
-              value={selectedBatch}
-              onChange={(e) => {
-                setSelectedBatch(Number(e.target.value));
-                setShowData(false);
-                setShippingData([]);
-              }}
-              className="w-full sm:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-            >
-              <option value={1}>Batch #1 (Active)</option>
-              <option value={2}>Batch #2 (Sequencing)</option>
-            </select>
+            <p className="text-sm text-gray-600">
+              Fetch all shipping data from Nillion. Data is organized by kit ID.
+            </p>
           </div>
 
           <button
@@ -202,8 +182,7 @@ export function ShippingDataViewer() {
                 Shipping Addresses
               </h3>
               <p className="text-sm text-gray-600 mt-1">
-                {shippingData.length} participants • Retrieved{" "}
-                {new Date(shippingData[0].retrievedAt).toLocaleString()}
+                {shippingData.length} kits
               </p>
             </div>
 
@@ -251,7 +230,7 @@ export function ShippingDataViewer() {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                        Wallet
+                        Kit ID
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                         Email
@@ -274,7 +253,7 @@ export function ShippingDataViewer() {
                     {shippingData.map((data, idx) => (
                       <tr key={idx}>
                         <td className="px-4 py-3 text-sm font-mono">
-                          {data.walletAddress.substring(0, 10)}...
+                          {data.kitId}
                         </td>
                         <td className="px-4 py-3 text-sm">{data.email}</td>
                         <td className="px-4 py-3 text-sm">{data.name}</td>
@@ -294,9 +273,9 @@ export function ShippingDataViewer() {
                 {shippingData.map((data, idx) => (
                   <div key={idx} className="bg-gray-50 rounded-lg p-4 space-y-2">
                     <div className="flex justify-between items-start">
-                      <span className="text-xs text-gray-500">Wallet</span>
+                      <span className="text-xs text-gray-500">Kit ID</span>
                       <span className="font-mono text-sm">
-                        {data.walletAddress.substring(0, 10)}...
+                        {data.kitId}
                       </span>
                     </div>
                     <div className="flex justify-between items-start">

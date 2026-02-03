@@ -1,44 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
+import { deleteData } from "@/lib/nillion/client";
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { batchId } = body;
+    // Delete all shipping data from nilDB
+    // Standard collection: Admin can delete all records via API key
 
-    // Validate inputs
-    if (!batchId || typeof batchId !== "number") {
-      return NextResponse.json(
-        { error: "Batch ID is required" },
-        { status: 400 }
-      );
-    }
+    console.log("Deleting all shipping data from Nillion...");
 
-    // Delete all shipping data for this batch from Nillion
-    // Nillion's admin API key provides access control
-    const nillionResponse = await fetch(
-      `${process.env.NEXT_PUBLIC_NILLION_API_URL || "https://nillion-api.example.com"}/delete-pattern`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.NILLION_ADMIN_API_KEY}`,
-        },
-        body: JSON.stringify({
-          keyPattern: `shipping_${batchId}_*`,
-        }),
-      }
-    );
+    // Delete all shipping records (empty filter deletes all)
+    const deletedCount = await deleteData('shipping', {});
 
-    if (!nillionResponse.ok) {
-      throw new Error(`Failed to delete from Nillion: ${nillionResponse.statusText}`);
-    }
-
-    const nillionData = await nillionResponse.json();
+    console.log(`Deleted ${deletedCount} shipping records`);
 
     return NextResponse.json({
       success: true,
-      deletedCount: nillionData.deletedCount || 0,
-      totalParticipants: nillionData.deletedCount || 0,
+      deletedCount,
     });
   } catch (error) {
     console.error("Error deleting shipping data:", error);

@@ -1,44 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { findData } from "@/lib/nillion/client";
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { batchId } = body;
+    // Query nilDB for all shipping data
+    // Standard collection: Admin has access to all records via API key
+    // Admin creates records on behalf of participants (Dynamic wallets not compatible with Nillion)
 
-    // Validate inputs
-    if (!batchId || typeof batchId !== "number") {
-      return NextResponse.json(
-        { error: "Batch ID is required" },
-        { status: 400 }
-      );
-    }
+    console.log("Fetching all shipping data from Nillion...");
 
-    // Query Nillion for all shipping data in this batch
-    // Nillion's admin API key provides access control - if the key is valid, access is granted
-    const nillionResponse = await fetch(
-      `${process.env.NEXT_PUBLIC_NILLION_API_URL || "https://nillion-api.example.com"}/query`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.NILLION_ADMIN_API_KEY}`,
-        },
-        body: JSON.stringify({
-          keyPattern: `shipping_${batchId}_*`,
-        }),
-      }
-    );
+    // Fetch all shipping records (empty filter)
+    const records = await findData('shipping', {});
 
-    if (!nillionResponse.ok) {
-      throw new Error(`Failed to query Nillion: ${nillionResponse.statusText}`);
-    }
-
-    const nillionData = await nillionResponse.json();
-
-    // Transform Nillion response to shipping data format
-    const shippingData = nillionData.results?.map((record: any) => ({
-      walletAddress: record.walletAddress,
-      batchId,
+    // Transform records to expected format
+    const shippingData = records.map((record: any) => ({
+      kitId: record.kitId,
       email: record.email,
       name: record.name,
       address: record.address,
@@ -46,13 +22,15 @@ export async function POST(request: NextRequest) {
       state: record.state,
       zip: record.zip,
       country: record.country,
-      retrievedAt: new Date().toISOString(),
-    })) || [];
+      storedAt: record.storedAt,
+      walletAddress: record.walletAddress, // For internal tracking
+    }));
+
+    console.log(`Retrieved ${shippingData.length} shipping records`);
 
     return NextResponse.json({
       success: true,
       shippingData,
-      batchId,
       participantCount: shippingData.length,
     });
   } catch (error) {
