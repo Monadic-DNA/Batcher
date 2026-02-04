@@ -136,9 +136,14 @@ export function isValidKitId(kitId: string): boolean {
  */
 export async function initNillionClient(): Promise<SecretVaultBuilderClient> {
   // Validate environment variables
+  const apiKey = process.env.NILLION_API_KEY;
   const nilauthUrl = process.env.NILLION_NILAUTH_URL;
   const nildbNodes = process.env.NILLION_NILDB_NODES;
   const chainId = process.env.NILLION_CHAIN_ID;
+
+  if (!apiKey) {
+    throw new Error('NILLION_API_KEY environment variable is not set');
+  }
 
   if (!nilauthUrl) {
     throw new Error('NILLION_NILAUTH_URL environment variable is not set. Example: https://nilauth.nillion.network');
@@ -162,6 +167,7 @@ export async function initNillionClient(): Promise<SecretVaultBuilderClient> {
   const nilauthClient = await NilauthClient.create({
     baseUrl: nilauthUrl,
     chainId: chainId ? parseInt(chainId) : 1, // Default to mainnet if not specified
+    apiKey,
   });
 
   // Initialize builder client
@@ -173,6 +179,9 @@ export async function initNillionClient(): Promise<SecretVaultBuilderClient> {
       operation: 'store', // For storing data with encryption
     },
   });
+
+  // Refresh root token to authenticate
+  await client.refreshRootToken();
 
   return client;
 }
