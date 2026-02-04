@@ -137,12 +137,17 @@ export function isValidKitId(kitId: string): boolean {
 export async function initNillionClient(): Promise<SecretVaultBuilderClient> {
   // Validate environment variables
   const apiKey = process.env.NILLION_API_KEY;
+  const builderPrivateKey = process.env.NILLION_API_KEY;
   const nilauthUrl = process.env.NILLION_NILAUTH_URL;
   const nildbNodes = process.env.NILLION_NILDB_NODES;
   const chainId = process.env.NILLION_CHAIN_ID;
 
   if (!apiKey) {
     throw new Error('NILLION_API_KEY environment variable is not set');
+  }
+
+  if (!builderPrivateKey) {
+    throw new Error('NILLION_BUILDER_PRIVATE_KEY environment variable is not set');
   }
 
   if (!nilauthUrl) {
@@ -160,8 +165,8 @@ export async function initNillionClient(): Promise<SecretVaultBuilderClient> {
     throw new Error('NILLION_NILDB_NODES must contain at least one valid URL');
   }
 
-  // Generate a signer for the builder
-  const signer = Signer.generate();
+  // Create signer from private key for legacy API keys
+  const signer = Signer.fromPrivateKey(builderPrivateKey, "nil");
 
   // Create nilauth client for authentication
   const nilauthClient = await NilauthClient.create({
