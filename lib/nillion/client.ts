@@ -188,19 +188,39 @@ export async function initNillionClient(): Promise<SecretVaultBuilderClient> {
   // Refresh root token to authenticate
   await client.refreshRootToken();
 
+  // Register builder on all nodes if not already registered
+  try {
+    await client.readProfile();
+  } catch (profileError) {
+    try {
+      const builderId = await client.getId();
+      await client.register({
+        did: builderId,
+        name: 'MonadicDNA',
+      });
+    } catch (registerError: any) {
+      // Handle duplicate key errors gracefully (builder already registered)
+      const errorBody = JSON.stringify(registerError);
+      if (!registerError.message?.includes('duplicate key') &&
+          !errorBody.includes('duplicate key')) {
+        throw registerError;
+      }
+    }
+  }
+
   return client;
 }
 
 /**
- * Wrap encrypted fields with %share marker for automatic encryption
- * nilDB schemas use %share, not %allot
+ * Wrap encrypted fields with %allot marker for automatic encryption
+ * nilDB uses %allot to distribute secret shares across nodes
  */
 function wrapEncryptedFields(data: Record<string, any>, encryptedFields: string[]): Record<string, any> {
   const wrapped: Record<string, any> = {};
 
   for (const [key, value] of Object.entries(data)) {
     if (encryptedFields.includes(key)) {
-      wrapped[key] = { "%share": value };
+      wrapped[key] = { "%allot": value };
     } else {
       wrapped[key] = value;
     }
@@ -246,8 +266,14 @@ export async function storeData(
     ? ['kitId', 'email', 'name', 'address', 'city', 'state', 'zip', 'country']
     : ['kitId', 'yearOfBirth', 'sexAssignedAtBirth', 'ethnicity'];
 
-  // Wrap encrypted fields with %allot marker
-  const wrappedData = wrapEncryptedFields(data, encryptedFields);
+  // Generate a unique _id for this record
+  const recordId = crypto.randomUUID();
+
+  // Wrap encrypted fields with %allot marker and add _id
+  const wrappedData = {
+    _id: recordId,
+    ...wrapEncryptedFields(data, encryptedFields),
+  };
 
   try {
     const result = await client.createStandardData({
@@ -256,17 +282,17 @@ export async function storeData(
     });
 
     // Extract first created ID from the response
-    const firstId = result['node1']?.data?.created?.[0] ||
-                    result['node2']?.data?.created?.[0] ||
-                    result['node3']?.data?.created?.[0];
+    // Response structure: { "did:key:xxx": { "data": { "created": ["id"], "errors": [] } } }
+    const firstNodeKey = Object.keys(result)[0];
+    const firstId = result[firstNodeKey]?.data?.created?.[0];
 
     if (!firstId) {
       throw new Error('No record ID returned from createStandardData');
     }
 
     return firstId;
-  } catch (error) {
-    console.error(`Failed to store ${collectionType} data:`, error);
+  } catch (error: any) {
+    console.error(`Failed to store ${collectionType} data`);
     throw error;
   }
 }
@@ -294,8 +320,13 @@ export async function findData(
     // Unwrap encrypted fields from response
     const records = result.data || [];
     return records.map(record => unwrapEncryptedFields(record));
-  } catch (error) {
-    console.error(`Failed to find ${collectionType} data:`, error);
+  } catch (error: any) {
+    // Handle 404 errors (empty collection) gracefully
+    if (Array.isArray(error) && error[0]?.error?.status === 404) {
+      return [];
+    }
+
+    console.error(`Failed to find ${collectionType} data`);
     throw error;
   }
 }
