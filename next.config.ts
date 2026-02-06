@@ -4,6 +4,9 @@ const nextConfig: NextConfig = {
   // Enable Turbopack (default in Next.js 16)
   turbopack: {},
 
+  // Mark server-only packages as external (prevents bundling for browser)
+  serverExternalPackages: ['libsodium-wrappers-sumo', 'libsodium-sumo', '@nillion/blindfold'],
+
   webpack: (config, { isServer }) => {
     // Handle Nillion dependencies that are not compatible with webpack
     if (isServer) {
@@ -32,6 +35,8 @@ const nextConfig: NextConfig = {
       'porto/internal': false,
       '@safe-global/safe-apps-sdk': false,
       '@safe-global/safe-apps-provider': false,
+      // Fix libsodium-wrappers-sumo looking for libsodium-sumo.mjs in wrong location
+      'libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs': 'libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs',
     };
 
     return config;

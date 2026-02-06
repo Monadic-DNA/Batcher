@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getBatchInfo, getCurrentBatchId } from "@/lib/contract";
+import { getBatchInfo, getCurrentBatchId, transitionBatchState, BatchState } from "@/lib/contract";
+import { useAccount, useWalletClient } from "wagmi";
+import { ethers } from "ethers";
 import {
   PlayCircle,
   AlertCircle,
@@ -15,6 +17,7 @@ interface Batch {
   id: number;
   state: string;
   participantCount: number;
+  maxBatchSize: number;
   depositsPaid: number;
   balancesPaid: number;
   createdAt: string;
@@ -24,10 +27,12 @@ interface Batch {
 
 export function BatchManagement() {
   const [batches, setBatches] = useState<Batch[]>([]);
-  const [, setSelectedBatch] = useState<number | null>(null);
+  const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
   const [processing, setProcessing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
+  const { address } = useAccount();
+  const { data: walletClient } = useWalletClient();
 
   const stateNames = ["Pending", "Staged", "Active", "Sequencing", "Completed", "Purged"];
 
@@ -51,6 +56,7 @@ export function BatchManagement() {
         id: index + 1,
         state: stateNames[info.state],
         participantCount: info.participantCount,
+        maxBatchSize: info.maxBatchSize,
         depositsPaid: info.participantCount, // Deposits are paid when joining
         balancesPaid: 0, // TODO: Track balance payments
         createdAt: new Date().toISOString(),
@@ -104,7 +110,7 @@ export function BatchManagement() {
   const canProgress = (batch: Batch): boolean => {
     switch (batch.state) {
       case "Pending":
-        return batch.participantCount >= 24;
+        return batch.participantCount >= batch.maxBatchSize;
       case "Staged":
         return true;
       case "Active":
@@ -119,26 +125,53 @@ export function BatchManagement() {
   };
 
   const handleProgressState = async (batchId: number) => {
+    if (!walletClient || !address) {
+      alert("Please connect your wallet first");
+      return;
+    }
+
     setProcessing(true);
     try {
-      // TODO: Call smart contract to progress state
-      // await contract.progressBatchState(batchId);
-      console.log("Progressing batch", batchId);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Find the batch and determine next state
+      const batch = batches.find(b => b.id === batchId);
+      if (!batch) {
+        throw new Error("Batch not found");
+      }
 
-      // Update local state
-      setBatches((prev) =>
-        prev.map((b) =>
-          b.id === batchId
-            ? { ...b, state: getNextState(b.state) || b.state }
-            : b
-        )
-      );
+      const nextStateName = getNextState(batch.state);
+      if (!nextStateName) {
+        throw new Error("No next state available");
+      }
+
+      // Map state names to BatchState enum
+      const stateMapping: Record<string, BatchState> = {
+        "Pending": BatchState.Pending,
+        "Staged": BatchState.Staged,
+        "Active": BatchState.Active,
+        "Sequencing": BatchState.Sequencing,
+        "Completed": BatchState.Completed,
+        "Purged": BatchState.Purged,
+      };
+
+      const newState = stateMapping[nextStateName];
+
+      // Create ethers signer from wagmi wallet client
+      const provider = new ethers.BrowserProvider(walletClient as any);
+      const signer = await provider.getSigner();
+
+      console.log("Transitioning batch", batchId, "to state", nextStateName);
+
+      // Call smart contract
+      const receipt = await transitionBatchState(batchId, newState, signer);
+      console.log("Transaction receipt:", receipt);
+
+      // Reload batches from contract to get updated state
+      await loadBatches();
 
       alert("Batch state progressed successfully!");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error progressing state:", error);
-      alert("Failed to progress batch state");
+      alert(`Failed to progress batch state: ${error.message || "Unknown error"}`);
     } finally {
       setProcessing(false);
     }
@@ -193,7 +226,7 @@ export function BatchManagement() {
           <option value="">All Batches</option>
           {batches.map((batch) => (
             <option key={batch.id} value={batch.id}>
-              Batch #{batch.id} - {batch.state} ({batch.participantCount}/24 participants)
+              Batch #{batch.id} - {batch.state} ({batch.participantCount}/{batch.maxBatchSize} participants)
             </option>
           ))}
         </select>
@@ -272,15 +305,15 @@ export function BatchManagement() {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
                       <div>
                         <p className="text-gray-600">Participants</p>
-                        <p className="font-medium">{batch.participantCount}/24</p>
+                        <p className="font-medium">{batch.participantCount}/{batch.maxBatchSize}</p>
                       </div>
                       <div>
                         <p className="text-gray-600">Deposits</p>
-                        <p className="font-medium">{batch.depositsPaid}/24</p>
+                        <p className="font-medium">{batch.depositsPaid}/{batch.maxBatchSize}</p>
                       </div>
                       <div>
                         <p className="text-gray-600">Balances</p>
-                        <p className="font-medium">{batch.balancesPaid}/24</p>
+                        <p className="font-medium">{batch.balancesPaid}/{batch.maxBatchSize}</p>
                       </div>
                       <div>
                         <p className="text-gray-600">Created</p>
@@ -294,7 +327,7 @@ export function BatchManagement() {
                   {/* Actions */}
                   <div className="flex gap-2">
                     <button
-                      onClick={() => setSelectedBatch(batch.id)}
+                      onClick={() => setSelectedBatch(batch)}
                       className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors text-sm"
                     >
                       View Details
@@ -333,7 +366,7 @@ export function BatchManagement() {
                       </p>
                       <p className="text-xs text-yellow-700 mt-1">
                         {batch.state === "Pending" &&
-                          `Need ${24 - batch.participantCount} more participants`}
+                          `Need ${batch.maxBatchSize - batch.participantCount} more participants`}
                         {batch.state === "Active" &&
                           `Waiting for ${batch.participantCount - batch.balancesPaid} balance payments`}
                       </p>
@@ -345,6 +378,91 @@ export function BatchManagement() {
           })}
         </div>
       </div>
+
+      {/* Batch Detail Modal */}
+      {selectedBatch && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-gray-900">
+                Batch #{selectedBatch.id} Details
+              </h2>
+              <button
+                onClick={() => setSelectedBatch(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Status Badge */}
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-600">Status:</span>
+                <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStateColor(selectedBatch.state)}`}>
+                  {selectedBatch.state}
+                </span>
+              </div>
+
+              {/* Stats Grid */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-sm text-gray-600 mb-1">Participants</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {selectedBatch.participantCount}/{selectedBatch.maxBatchSize}
+                  </p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-sm text-gray-600 mb-1">Deposits Paid</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {selectedBatch.depositsPaid}/{selectedBatch.maxBatchSize}
+                  </p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-sm text-gray-600 mb-1">Balances Paid</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {selectedBatch.balancesPaid}/{selectedBatch.maxBatchSize}
+                  </p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-sm text-gray-600 mb-1">Created</p>
+                  <p className="text-lg font-semibold text-gray-900">
+                    {new Date(selectedBatch.createdAt).toLocaleDateString()}
+                  </p>
+                </div>
+              </div>
+
+              {/* Progress Bar */}
+              <div>
+                <div className="flex justify-between text-sm text-gray-600 mb-2">
+                  <span>Batch Progress</span>
+                  <span>
+                    {Math.round((selectedBatch.participantCount / selectedBatch.maxBatchSize) * 100)}%
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-indigo-600 h-2 rounded-full transition-all"
+                    style={{ width: `${(selectedBatch.participantCount / selectedBatch.maxBatchSize) * 100}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Close Button */}
+              <div className="flex justify-end pt-4">
+                <button
+                  onClick={() => setSelectedBatch(null)}
+                  className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

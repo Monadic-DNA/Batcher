@@ -92,19 +92,21 @@ export function BalancePaymentModal({
         throw new Error("Please connect your wallet first");
       }
 
-      // Get the wallet connector and create ethers signer
+      // Get the wallet connector
       const walletConnector = await primaryWallet.connector;
       if (!walletConnector) {
         throw new Error("Wallet connector not available");
       }
 
-      const ethersProvider = (walletConnector as any).ethers?.getRpcProvider();
-      if (!ethersProvider) {
+      // Get provider from Dynamic wallet
+      const provider = await walletConnector.getWalletClient();
+      if (!provider) {
         throw new Error("Provider not available");
       }
 
-      const provider = await ethersProvider;
-      const signer = await provider.getSigner();
+      // Create ethers provider and signer from Dynamic's provider
+      const ethersProvider = new ethers.BrowserProvider(provider as any);
+      const signer = await ethersProvider.getSigner();
 
       // Get full price from contract and calculate balance (90%)
       const fullPrice = await getFullPrice();

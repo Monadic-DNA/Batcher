@@ -9,8 +9,8 @@ export const config = createConfig({
   transports: {
     [sepolia.id]: http(process.env.NEXT_PUBLIC_RPC_URL || 'https://rpc.sepolia.org'),
   },
-  // Disable auto-reconnect to prevent MetaMask errors when extension not installed
-  multiInjectedProviderDiscovery: false,
+  // Enable multi-wallet discovery so user can choose between MetaMask, Temple, Keplr, etc.
+  multiInjectedProviderDiscovery: true,
   ssr: true,
 })
 
