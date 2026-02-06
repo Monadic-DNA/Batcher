@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth, AuthButton } from "@/components/AuthProvider";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { UserStatusCard } from "@/components/dashboard/UserStatusCard";
 import { BatchHistory } from "@/components/dashboard/BatchHistory";
 import { FAQ } from "@/components/dashboard/FAQ";
@@ -33,6 +33,7 @@ export default function Home() {
     isAuthenticated,
     user,
     batchInfo,
+    userBatches,
     initializeDynamic,
     isDynamicInitialized,
     refreshBatch,
@@ -41,6 +42,7 @@ export default function Home() {
   // Modal state management
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
   const [isShippingModalOpen, setIsShippingModalOpen] = useState(false);
+  const [selectedUserBatchId, setSelectedUserBatchId] = useState<number | null>(null);
   const [isKitRegistrationModalOpen, setIsKitRegistrationModalOpen] = useState(false);
   const [isBalancePaymentModalOpen, setIsBalancePaymentModalOpen] = useState(false);
   const [isDataRevealModalOpen, setIsDataRevealModalOpen] = useState(false);
@@ -59,6 +61,12 @@ export default function Home() {
   const [currentBatchInfo, setCurrentBatchInfo] = useState<{
     participantCount: number;
     state: number;
+    maxBatchSize: number;
+  } | null>(null);
+  const [userBatchInfo, setUserBatchInfo] = useState<{
+    participantCount: number;
+    state: number;
+    maxBatchSize: number;
   } | null>(null);
   const [participantInfo, setParticipantInfo] = useState<any>(null);
   const [participants, setParticipants] = useState<string[]>([]);
@@ -69,13 +77,13 @@ export default function Home() {
     id: number;
     state: string;
     participantCount: number;
+    maxBatchSize: number;
     createdAt: string;
     completedAt?: string;
   }>>([]);
 
   // Fetch current batch data from smart contract
-  useEffect(() => {
-    const fetchBatchData = async () => {
+  const fetchBatchData = useCallback(async () => {
       try {
         setLoadingContractData(true);
         const batchId = await getCurrentBatchId();
@@ -95,6 +103,7 @@ export default function Home() {
               id: i,
               state: stateNames[batch.state],
               participantCount: batch.participantCount,
+              maxBatchSize: batch.maxBatchSize,
               createdAt: new Date().toISOString(), // Timestamp not available from contract
               completedAt: batch.state >= 4 ? new Date().toISOString() : undefined,
             });
@@ -138,15 +147,32 @@ export default function Home() {
           setParticipants([]);
         }
 
-        // If user is authenticated, fetch their participant info
-        if (walletAddress && batchInfo) {
-          try {
-            const participantData = await getParticipantInfo(batchId, walletAddress);
-            setParticipantInfo(participantData);
-          } catch {
-            // User might not be a participant yet
-            console.log("User not a participant in current batch");
-            setParticipantInfo(null);
+        // If user is authenticated, check if they're in ANY batch (not just current)
+        if (walletAddress) {
+          // First check if batchInfo from AuthProvider tells us which batch they're in
+          if (batchInfo && batchInfo.joined && batchInfo.batchId) {
+            try {
+              // User is in a specific batch - fetch that batch's info
+              const userBatch = await getBatchInfo(batchInfo.batchId);
+              setUserBatchInfo(userBatch);
+
+              const participantData = await getParticipantInfo(batchInfo.batchId, walletAddress);
+              setParticipantInfo(participantData);
+            } catch (err) {
+              console.error("Failed to fetch user's batch info:", err);
+            }
+          } else {
+            // Check current batch
+            try {
+              const participantData = await getParticipantInfo(batchId, walletAddress);
+              setParticipantInfo(participantData);
+              setUserBatchInfo(null); // User is in current batch, use currentBatchInfo
+            } catch {
+              // User might not be a participant yet
+              console.log("User not a participant in current batch");
+              setParticipantInfo(null);
+              setUserBatchInfo(null);
+            }
           }
         }
       } catch (error) {
@@ -176,14 +202,14 @@ export default function Home() {
       } finally {
         setLoadingContractData(false);
       }
-    };
+  }, [walletAddress]);
 
+  // Call fetchBatchData when initialized
+  useEffect(() => {
     if (isDynamicInitialized) {
       fetchBatchData();
     }
-  }, [isDynamicInitialized, walletAddress]);
-
-  const MAX_BATCH_SIZE = 24;
+  }, [isDynamicInitialized, fetchBatchData]);
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -278,16 +304,23 @@ export default function Home() {
               <>
                 <div className="mb-4">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm text-gray-600">Batch #{currentBatchId}</span>
+                    <span className="text-sm text-gray-600">
+                      Batch #{batchInfo?.joined ? batchInfo.batchId : currentBatchId}
+                    </span>
                     <span className="font-bold text-blue-600">
-                      {currentBatchInfo.participantCount}/{MAX_BATCH_SIZE}
+                      {userBatchInfo
+                        ? `${userBatchInfo.participantCount}/${userBatchInfo.maxBatchSize}`
+                        : `${currentBatchInfo.participantCount}/${currentBatchInfo.maxBatchSize}`
+                      }
                     </span>
                   </div>
                   <div className="w-full bg-blue-200 rounded-full h-3">
                     <div
                       className="bg-blue-600 h-3 rounded-full transition-all"
                       style={{
-                        width: `${(currentBatchInfo.participantCount / MAX_BATCH_SIZE) * 100}%`,
+                        width: userBatchInfo
+                          ? `${(userBatchInfo.participantCount / userBatchInfo.maxBatchSize) * 100}%`
+                          : `${(currentBatchInfo.participantCount / currentBatchInfo.maxBatchSize) * 100}%`,
                       }}
                     />
                   </div>
@@ -507,23 +540,54 @@ export default function Home() {
             <h2 className="text-xl font-bold text-gray-900 mb-4">Your Actions</h2>
             {isAuthenticated ? (
               <>
-                {batchInfo && batchInfo.joined ? (
-                  <UserStatusCard
-                    batchId={batchInfo.batchId}
-                    batchState={batchInfo.batchState}
-                    depositPaid={batchInfo.depositPaid}
-                    balancePaid={batchInfo.balancePaid}
-                    paymentDeadline={
-                      batchInfo.batchState === "Active"
-                        ? new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
-                        : undefined
-                    }
-                    kitRegistered={false}
-                    resultsAvailable={false}
-                    onPayBalance={() => setIsBalancePaymentModalOpen(true)}
-                    onRegisterKit={() => setIsKitRegistrationModalOpen(true)}
-                    onDownloadResults={() => setIsDataRevealModalOpen(true)}
-                  />
+                {userBatches.length > 0 ? (
+                  <>
+                    {/* Batch Selector Dropdown (if multiple batches) */}
+                    {userBatches.length > 1 && (
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Select Batch
+                        </label>
+                        <select
+                          value={selectedUserBatchId || userBatches[0].batchId}
+                          onChange={(e) => setSelectedUserBatchId(Number(e.target.value))}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        >
+                          {userBatches.map((batch) => (
+                            <option key={batch.batchId} value={batch.batchId}>
+                              Batch #{batch.batchId} - {batch.batchState}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Display selected batch info */}
+                    {(() => {
+                      const displayBatch = userBatches.find(
+                        (b) => b.batchId === (selectedUserBatchId || userBatches[0].batchId)
+                      ) || userBatches[0];
+
+                      return (
+                        <UserStatusCard
+                          batchId={displayBatch.batchId}
+                          batchState={displayBatch.batchState}
+                          depositPaid={displayBatch.depositPaid}
+                          balancePaid={displayBatch.balancePaid}
+                          paymentDeadline={
+                            displayBatch.batchState === "Active"
+                              ? new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
+                              : undefined
+                          }
+                          kitRegistered={false}
+                          resultsAvailable={false}
+                          onPayBalance={() => setIsBalancePaymentModalOpen(true)}
+                          onRegisterKit={() => setIsKitRegistrationModalOpen(true)}
+                          onDownloadResults={() => setIsDataRevealModalOpen(true)}
+                        />
+                      );
+                    })()}
+                  </>
                 ) : (
                   <div className="text-center py-8">
                     <svg
@@ -726,11 +790,12 @@ export default function Home() {
             onClose={() => setIsJoinModalOpen(false)}
             onJoinSuccess={() => {
               refreshBatch();
+              fetchBatchData(); // Refresh batch data after joining
               setIsShippingModalOpen(true);
             }}
             batchId={currentBatchId}
             currentCount={currentBatchInfo.participantCount}
-            maxSize={MAX_BATCH_SIZE}
+            maxSize={currentBatchInfo.maxBatchSize}
           />
 
           <ShippingMetadataModal
@@ -738,6 +803,7 @@ export default function Home() {
             onClose={() => setIsShippingModalOpen(false)}
             onSubmitSuccess={() => {
               refreshBatch();
+              fetchBatchData();
             }}
             batchId={batchInfo?.batchId || currentBatchId}
           />
@@ -747,6 +813,7 @@ export default function Home() {
             onClose={() => setIsKitRegistrationModalOpen(false)}
             onRegisterSuccess={() => {
               refreshBatch();
+              fetchBatchData();
             }}
             batchId={batchInfo?.batchId || currentBatchId}
           />
@@ -756,6 +823,7 @@ export default function Home() {
             onClose={() => setIsBalancePaymentModalOpen(false)}
             onPaymentSuccess={() => {
               refreshBatch();
+              fetchBatchData();
               setIsShippingModalOpen(true);
             }}
             batchId={batchInfo?.batchId || currentBatchId}

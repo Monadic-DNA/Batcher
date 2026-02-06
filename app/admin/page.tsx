@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from 'next/link';
 import { useAccount, useConnect, useDisconnect } from 'wagmi';
 import { BatchManagement } from "@/components/admin/BatchManagement";
 import { ShippingDataViewer } from "@/components/admin/ShippingDataViewer";
@@ -50,7 +51,7 @@ export default function AdminPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center gap-4">
-              <a
+              <Link
                 href="/"
                 className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
               >
@@ -58,7 +59,7 @@ export default function AdminPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                 </svg>
                 <span className="text-sm font-medium">Back to Home</span>
-              </a>
+              </Link>
               <div className="h-6 border-l border-gray-300"></div>
               <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
                 Admin Dashboard

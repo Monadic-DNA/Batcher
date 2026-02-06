@@ -7,6 +7,7 @@ interface Batch {
   id: number;
   state: string;
   participantCount: number;
+  maxBatchSize: number;
   createdAt: string;
   completedAt?: string;
 }
@@ -115,11 +116,11 @@ export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium">{batch.participantCount}/24</span>
+                        <span className="font-medium">{batch.participantCount}/{batch.maxBatchSize}</span>
                         <div className="w-16 bg-gray-200 rounded-full h-2">
                           <div
                             className="bg-blue-600 h-2 rounded-full transition-all"
-                            style={{ width: `${(batch.participantCount / 24) * 100}%` }}
+                            style={{ width: `${(batch.participantCount / batch.maxBatchSize) * 100}%` }}
                           />
                         </div>
                       </div>
@@ -160,12 +161,12 @@ export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
                   <div>
                     <div className="flex justify-between mb-1">
                       <span className="text-gray-600">Participants:</span>
-                      <span className="font-medium">{batch.participantCount}/24</span>
+                      <span className="font-medium">{batch.participantCount}/{batch.maxBatchSize}</span>
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-2">
                       <div
                         className="bg-blue-600 h-2 rounded-full transition-all"
-                        style={{ width: `${(batch.participantCount / 24) * 100}%` }}
+                        style={{ width: `${(batch.participantCount / batch.maxBatchSize) * 100}%` }}
                       />
                     </div>
                   </div>
@@ -198,6 +199,7 @@ export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
           batchId={selectedBatch.id}
           state={selectedBatch.state}
           participantCount={selectedBatch.participantCount}
+          maxBatchSize={selectedBatch.maxBatchSize}
           createdAt={selectedBatch.createdAt}
           completedAt={selectedBatch.completedAt}
         />

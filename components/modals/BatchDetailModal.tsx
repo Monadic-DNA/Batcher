@@ -9,6 +9,7 @@ interface BatchDetailModalProps {
   batchId: number;
   state: string;
   participantCount: number;
+  maxBatchSize: number;
   createdAt: string;
   completedAt?: string;
 }
@@ -19,6 +20,7 @@ export function BatchDetailModal({
   batchId,
   state,
   participantCount,
+  maxBatchSize,
   createdAt,
   completedAt,
 }: BatchDetailModalProps) {
@@ -105,7 +107,7 @@ export function BatchDetailModal({
                     {state}
                   </span>
                   <span className="text-sm text-gray-500">
-                    {participantCount}/24 participants
+                    {participantCount}/{maxBatchSize} participants
                   </span>
                 </div>
               </div>
@@ -143,7 +145,7 @@ export function BatchDetailModal({
                 <div className="flex justify-between">
                   <span className="text-sm text-gray-600">Participant Count:</span>
                   <span className="text-sm font-medium text-gray-900">
-                    {participantCount} / 24
+                    {participantCount} / {maxBatchSize}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -152,11 +154,11 @@ export function BatchDetailModal({
                     <div className="w-32 bg-gray-200 rounded-full h-2">
                       <div
                         className="bg-blue-600 h-2 rounded-full transition-all"
-                        style={{ width: `${(participantCount / 24) * 100}%` }}
+                        style={{ width: `${(participantCount / maxBatchSize) * 100}%` }}
                       />
                     </div>
                     <span className="text-sm font-medium text-gray-900">
-                      {Math.round((participantCount / 24) * 100)}%
+                      {Math.round((participantCount / maxBatchSize) * 100)}%
                     </span>
                   </div>
                 </div>

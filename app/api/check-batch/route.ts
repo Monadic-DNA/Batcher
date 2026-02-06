@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-// import { ethers } from "ethers"; // Will be used when integrating with smart contract
-
-// This will be replaced with actual contract interaction
-// For now, it's a placeholder that simulates checking the smart contract
+import { getCurrentBatchId, getBatchInfo, getParticipantInfo, isParticipant } from "@/lib/contract";
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,65 +22,47 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Batch Check] Checking batch status for: ${walletAddress}`);
 
-    // TODO: Replace with actual smart contract interaction
-    // For now, return mock data
-    // In production, this should:
-    // 1. Connect to the deployed BatchStateMachine contract
-    // 2. Call isParticipant(currentBatchId, walletAddress)
-    // 3. If participant, call getParticipantInfo(batchId, walletAddress)
-    // 4. Call getBatchInfo(batchId) to get batch state
+    // Get current batch ID
+    const currentBatchId = await getCurrentBatchId();
+    const states = ['Pending', 'Staged', 'Active', 'Sequencing', 'Completed', 'Purged'];
 
-    // Example of what the real implementation would look like:
-    /*
-    const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-    const contract = new ethers.Contract(
-      process.env.CONTRACT_ADDRESS!,
-      BatchStateMachineABI,
-      provider
-    );
+    // Check all batches from current down to 1 to find ALL batches the user is in
+    const userBatches = [];
 
-    const currentBatchId = await contract.currentBatchId();
-    const isParticipant = await contract.isParticipant(currentBatchId, walletAddress);
+    for (let batchId = currentBatchId; batchId >= 1; batchId--) {
+      const isUserInBatch = await isParticipant(batchId, walletAddress);
 
-    if (!isParticipant) {
+      if (isUserInBatch) {
+        // User found in this batch
+        const participantInfo = await getParticipantInfo(batchId, walletAddress);
+        const batchInfo = await getBatchInfo(batchId);
+
+        userBatches.push({
+          batchId,
+          joined: true,
+          depositPaid: participantInfo.depositAmount > 0n,
+          balancePaid: participantInfo.balancePaid,
+          batchState: states[batchInfo.state],
+        });
+      }
+    }
+
+    // Return all batches user is in, or indicate they haven't joined any
+    if (userBatches.length > 0) {
       return NextResponse.json({
         success: true,
-        batchInfo: {
-          batchId: currentBatchId.toString(),
-          joined: false,
-          depositPaid: false,
-          balancePaid: false,
-          batchState: 'Not Joined',
-        },
+        batches: userBatches,
+        // Keep batchInfo for backwards compatibility (use most recent batch)
+        batchInfo: userBatches[0],
       });
     }
 
-    const participantInfo = await contract.getParticipantInfo(currentBatchId, walletAddress);
-    const batchInfo = await contract.getBatchInfo(currentBatchId);
-
-    const states = ['Pending', 'Staged', 'Active', 'Sequencing', 'Completed', 'Purged'];
-
+    // User is not a participant in any batch
     return NextResponse.json({
       success: true,
+      batches: [],
       batchInfo: {
-        batchId: currentBatchId.toString(),
-        joined: true,
-        depositPaid: participantInfo.depositAmount > 0,
-        balancePaid: participantInfo.balancePaid,
-        batchState: states[batchInfo.state],
-        depositAmount: ethers.formatEther(participantInfo.depositAmount),
-        balanceAmount: ethers.formatEther(participantInfo.balanceAmount),
-        paymentDeadline: new Date(participantInfo.paymentDeadline.toNumber() * 1000).toISOString(),
-        slashed: participantInfo.slashed,
-      },
-    });
-    */
-
-    // Mock response for development
-    return NextResponse.json({
-      success: true,
-      batchInfo: {
-        batchId: 1,
+        batchId: currentBatchId,
         joined: false,
         depositPaid: false,
         balancePaid: false,

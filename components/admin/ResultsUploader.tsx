@@ -141,7 +141,7 @@ export function ResultsUploader() {
     └── ...`}</pre>
             </div>
             <p className="mt-2 text-xs text-gray-500">
-              Results are organized by batch ID, with each kit's results in a separate CSV file
+              Results are organized by batch ID, with each kit&apos;s results in a separate CSV file
             </p>
           </div>
 

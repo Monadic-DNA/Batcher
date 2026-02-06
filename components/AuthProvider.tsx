@@ -28,6 +28,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   user: unknown | null;
   batchInfo: BatchInfo | null;
+  userBatches: BatchInfo[];
   checkingBatch: boolean;
   refreshBatch: () => Promise<void>;
   initializeDynamic: () => void;
@@ -39,6 +40,7 @@ const AuthContext = createContext<AuthContextType>({
   isAuthenticated: false,
   user: null,
   batchInfo: null,
+  userBatches: [],
   checkingBatch: false,
   refreshBatch: async () => {},
   initializeDynamic: () => {},
@@ -85,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<unknown>(null);
   const [batchInfo, setBatchInfo] = useState<BatchInfo | null>(null);
+  const [userBatches, setUserBatches] = useState<BatchInfo[]>([]);
   const [checkingBatch, setCheckingBatch] = useState(false);
   const [isDynamicInitialized, setIsDynamicInitialized] = useState(false);
   const [openAuthModalFn, setOpenAuthModalFn] = useState<(() => void) | null>(
@@ -118,13 +121,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setBatchInfo(result.batchInfo);
+      setUserBatches(result.batches || []);
 
       console.log("[AuthProvider] Batch check complete:", result.batchInfo);
+      console.log("[AuthProvider] User batches:", result.batches);
 
       return result.batchInfo;
     } catch (error) {
       console.error("[AuthProvider] Failed to check batch status:", error);
       setBatchInfo(null);
+      setUserBatches([]);
       return null;
     } finally {
       setCheckingBatch(false);
@@ -216,6 +222,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           isAuthenticated: false,
           user: null,
           batchInfo: null,
+          userBatches: [],
           checkingBatch: false,
           refreshBatch: async () => {},
           initializeDynamic: () => {},
@@ -258,6 +265,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           isAuthenticated,
           user,
           batchInfo,
+          userBatches,
           checkingBatch,
           refreshBatch,
           initializeDynamic,

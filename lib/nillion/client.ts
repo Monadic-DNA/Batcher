@@ -172,7 +172,6 @@ export async function initNillionClient(): Promise<SecretVaultBuilderClient> {
   const nilauthClient = await NilauthClient.create({
     baseUrl: nilauthUrl,
     chainId: chainId ? parseInt(chainId) : 1, // Default to mainnet if not specified
-    apiKey,
   });
 
   // Initialize builder client
@@ -348,7 +347,7 @@ export async function deleteData(
   try {
     const result = await client.deleteData({
       collection: collectionId,
-      filter: Object.keys(filter).length > 0 ? filter : undefined,
+      filter: filter,
     });
 
     // Extract deletedCount from the response (may vary by node)

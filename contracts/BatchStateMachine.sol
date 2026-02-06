@@ -116,7 +116,8 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
 
         // Refund excess payment
         if (msg.value > depositAmount) {
-            payable(msg.sender).transfer(msg.value - depositAmount);
+            (bool success, ) = payable(msg.sender).call{value: msg.value - depositAmount}("");
+            require(success, "Refund failed");
         }
 
         // Auto-transition to Staged if batch is full
@@ -149,7 +150,8 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
 
         // Refund excess payment
         if (msg.value > balanceAmount) {
-            payable(msg.sender).transfer(msg.value - balanceAmount);
+            (bool success, ) = payable(msg.sender).call{value: msg.value - balanceAmount}("");
+            require(success, "Refund failed");
         }
     }
 
@@ -270,7 +272,8 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
      */
     function withdrawFunds(uint256 amount) external onlyOwner nonReentrant {
         require(amount <= address(this).balance, "Insufficient contract balance");
-        payable(owner()).transfer(amount);
+        (bool success, ) = payable(owner()).call{value: amount}("");
+        require(success, "Withdrawal failed");
         emit FundsWithdrawn(owner(), amount);
     }
 

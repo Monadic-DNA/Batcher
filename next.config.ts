@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Enable Turbopack (default in Next.js 16)
+  turbopack: {},
+
   webpack: (config, { isServer }) => {
     // Handle Nillion dependencies that are not compatible with webpack
     if (isServer) {

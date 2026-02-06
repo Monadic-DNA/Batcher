@@ -1,14 +1,23 @@
 import { http, createConfig } from 'wagmi'
-import { hardhat } from 'wagmi/chains'
+import { sepolia } from 'wagmi/chains'
 import { injected } from 'wagmi/connectors'
 import { QueryClient } from '@tanstack/react-query'
 
 export const config = createConfig({
-  chains: [hardhat],
+  chains: [sepolia],
   connectors: [injected()],
   transports: {
-    [hardhat.id]: http('http://localhost:8545'),
+    [sepolia.id]: http(process.env.NEXT_PUBLIC_RPC_URL || 'https://rpc.sepolia.org'),
   },
+  // Disable auto-reconnect to prevent MetaMask errors when extension not installed
+  multiInjectedProviderDiscovery: false,
+  ssr: true,
 })
 
-export const queryClient = new QueryClient()
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+    },
+  },
+})

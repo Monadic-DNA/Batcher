@@ -8,11 +8,16 @@ export async function POST(request: NextRequest) {
   try {
     const { addresses, chainId } = await request.json();
 
-    if (!Array.isArray(addresses) || addresses.length === 0) {
+    if (!Array.isArray(addresses)) {
       return NextResponse.json(
         { error: "addresses array is required" },
         { status: 400 }
       );
+    }
+
+    // Return empty result if no addresses (not an error)
+    if (addresses.length === 0) {
+      return NextResponse.json({ ensNames: {} });
     }
 
     // Only resolve ENS on mainnet or sepolia

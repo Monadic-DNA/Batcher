@@ -252,7 +252,7 @@ export function BatchSizeConfig() {
             <li>Default batch size applies to all newly created batches</li>
             <li>Only pending batches can be resized</li>
             <li>Cannot set batch size below current participant count</li>
-            <li>If a batch reaches its new size, it will automatically transition to "Staged"</li>
+            <li>If a batch reaches its new size, it will automatically transition to &ldquo;Staged&rdquo;</li>
             <li>All changes are recorded as blockchain events for auditing</li>
           </ul>
         </div>
