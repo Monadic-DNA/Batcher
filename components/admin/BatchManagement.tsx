@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getBatchInfo, getCurrentBatchId, transitionBatchState, BatchState } from "@/lib/contract";
+import { getBatchInfo, getCurrentBatchId, transitionBatchState, BatchState, withdrawFunds, getContract } from "@/lib/contract";
 import { useAccount, useWalletClient } from "wagmi";
 import { ethers } from "ethers";
 import {
@@ -11,6 +11,9 @@ import {
   Clock,
   Users,
   ChevronRight,
+  DollarSign,
+  Wallet,
+  AlertTriangle,
 } from "lucide-react";
 
 interface Batch {
@@ -31,6 +34,9 @@ export function BatchManagement() {
   const [processing, setProcessing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
+  const [contractBalance, setContractBalance] = useState<string>("0");
+  const [withdrawAmount, setWithdrawAmount] = useState<string>("");
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
 
@@ -38,6 +44,7 @@ export function BatchManagement() {
 
   useEffect(() => {
     loadBatches();
+    loadContractBalance();
   }, []);
 
   const loadBatches = async () => {
@@ -70,6 +77,97 @@ export function BatchManagement() {
       console.error("Error loading batches:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadContractBalance = async () => {
+    try {
+      // Get contract address - try multiple methods
+      const contractAddress =
+        process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ||
+        (typeof window !== 'undefined' && (window as any).NEXT_PUBLIC_CONTRACT_ADDRESS);
+
+      console.log("Contract address:", contractAddress);
+
+      if (!contractAddress) {
+        console.error("Contract address not configured");
+        setContractBalance("0");
+        return;
+      }
+
+      // Get provider directly
+      const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "https://rpc.sepolia.org";
+      console.log("Using RPC URL:", rpcUrl);
+
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+
+      console.log("Fetching balance for contract:", contractAddress);
+      const balance = await provider.getBalance(contractAddress);
+      console.log("Contract balance (raw):", balance.toString());
+      console.log("Contract balance (ETH):", ethers.formatEther(balance));
+
+      setContractBalance(ethers.formatEther(balance));
+    } catch (error) {
+      console.error("Error loading contract balance:", error);
+      setContractBalance("0");
+    }
+  };
+
+  const handleWithdrawFunds = async () => {
+    if (!walletClient || !address) {
+      alert("Please connect your wallet first");
+      return;
+    }
+
+    if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) {
+      alert("Please enter a valid amount");
+      return;
+    }
+
+    const amountInEth = parseFloat(withdrawAmount);
+    const balanceInEth = parseFloat(contractBalance);
+
+    if (amountInEth > balanceInEth) {
+      alert(`Cannot withdraw more than contract balance (${contractBalance} ETH)`);
+      return;
+    }
+
+    if (!confirm(
+      `⚠️ WARNING: You are about to withdraw ${amountInEth} ETH from the contract.\n\n` +
+      `This will remove funds that may be needed for participant refunds.\n\n` +
+      `Contract Balance: ${contractBalance} ETH\n` +
+      `Amount to Withdraw: ${amountInEth} ETH\n` +
+      `Remaining Balance: ${(balanceInEth - amountInEth).toFixed(4)} ETH\n\n` +
+      `Are you sure you want to proceed?`
+    )) {
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      // Create ethers signer from wagmi wallet client
+      const provider = new ethers.BrowserProvider(walletClient as any);
+      const signer = await provider.getSigner();
+
+      const amountInWei = ethers.parseEther(withdrawAmount);
+
+      console.log("Withdrawing", withdrawAmount, "ETH from contract");
+
+      // Call smart contract
+      const receipt = await withdrawFunds(amountInWei, signer);
+      console.log("Transaction receipt:", receipt);
+
+      // Reload contract balance
+      await loadContractBalance();
+
+      alert(`Successfully withdrew ${withdrawAmount} ETH!`);
+      setShowWithdrawModal(false);
+      setWithdrawAmount("");
+    } catch (error: any) {
+      console.error("Error withdrawing funds:", error);
+      alert(`Failed to withdraw funds: ${error.message || "Unknown error"}`);
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -233,7 +331,7 @@ export function BatchManagement() {
       </div>
 
       {/* Stats Overview */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-gray-600">Total Batches</span>
@@ -270,6 +368,15 @@ export function BatchManagement() {
           <p className="text-2xl font-bold text-gray-900">
             {batches.filter((b) => b.state === "Completed").length}
           </p>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-gray-600">Contract Balance</span>
+            <Wallet className="w-5 h-5 text-purple-600" />
+          </div>
+          <p className="text-2xl font-bold text-gray-900">{parseFloat(contractBalance).toFixed(4)}</p>
+          <p className="text-xs text-gray-500 mt-1">ETH</p>
         </div>
       </div>
 
@@ -379,6 +486,32 @@ export function BatchManagement() {
         </div>
       </div>
 
+      {/* Withdraw Funds Section */}
+      <div className="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-200 rounded-lg shadow p-6">
+        <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              <DollarSign className="w-6 h-6 text-purple-600" />
+              <h3 className="text-lg font-bold text-gray-900">Emergency Fund Withdrawal</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Withdraw funds from the smart contract. <strong className="text-red-600">WARNING:</strong> This may prevent participant refunds.
+            </p>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-gray-700">Available to withdraw:</span>
+              <span className="font-bold text-purple-600">{contractBalance} ETH</span>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowWithdrawModal(true)}
+            className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap"
+          >
+            <Wallet className="w-5 h-5" />
+            Withdraw Funds
+          </button>
+        </div>
+      </div>
+
       {/* Batch Detail Modal */}
       {selectedBatch && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -457,6 +590,100 @@ export function BatchManagement() {
                   className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors"
                 >
                   Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Withdraw Funds Modal */}
+      {showWithdrawModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-gray-900">Withdraw Funds</h2>
+              <button
+                onClick={() => {
+                  setShowWithdrawModal(false);
+                  setWithdrawAmount("");
+                }}
+                className="text-gray-400 hover:text-gray-600"
+                disabled={processing}
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Warning */}
+              <div className="bg-red-50 border-2 border-red-200 rounded-lg p-4">
+                <div className="flex gap-3">
+                  <AlertTriangle className="w-6 h-6 text-red-600 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-bold text-red-900 mb-1">⚠️ Emergency Withdrawal</p>
+                    <p className="text-xs text-red-700">
+                      Withdrawing funds may prevent participant refunds and break contract functionality. Only use in emergencies.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Contract Balance */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Contract Balance</span>
+                  <span className="text-lg font-bold text-gray-900">{contractBalance} ETH</span>
+                </div>
+              </div>
+
+              {/* Amount Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Amount to Withdraw (ETH)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.0001"
+                    min="0"
+                    max={contractBalance}
+                    value={withdrawAmount}
+                    onChange={(e) => setWithdrawAmount(e.target.value)}
+                    placeholder="0.0000"
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    disabled={processing}
+                  />
+                  <button
+                    onClick={() => setWithdrawAmount(contractBalance)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded text-sm font-medium transition-colors"
+                    disabled={processing}
+                  >
+                    Max
+                  </button>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => {
+                    setShowWithdrawModal(false);
+                    setWithdrawAmount("");
+                  }}
+                  className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                  disabled={processing}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleWithdrawFunds}
+                  disabled={processing || !withdrawAmount || parseFloat(withdrawAmount) <= 0}
+                  className="flex-1 px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {processing ? "Processing..." : "Withdraw"}
                 </button>
               </div>
             </div>
