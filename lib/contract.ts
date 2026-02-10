@@ -4,6 +4,7 @@ import { ethers } from "ethers";
 const BATCH_STATE_MACHINE_ABI = [
   "function joinBatch() external",
   "function payBalance(uint256 batchId) external",
+  "function markBalanceAsPaid(uint256 batchId, address user, uint256 balanceAmount) external",
   "function usdcToken() external view returns (address)",
   "function pause() external",
   "function unpause() external",
@@ -11,7 +12,8 @@ const BATCH_STATE_MACHINE_ABI = [
   "function storeCommitmentHash(uint256 batchId, bytes32 commitmentHash) external",
   "function slashUser(uint256 batchId, address user) external",
   "function canStillPay(uint256 batchId, address user) external view returns (bool)",
-  "function getBatchInfo(uint256 batchId) external view returns (uint8 state, uint256 participantCount, uint256 maxBatchSize, uint256 createdAt, uint256 stateChangedAt)",
+  "function allParticipantsPaid(uint256 batchId) external view returns (bool)",
+  "function getBatchInfo(uint256 batchId) external view returns (uint8 state, uint256 participantCount, uint256 activeParticipantCount, uint256 maxBatchSize, uint256 createdAt, uint256 stateChangedAt)",
   "function getParticipantInfo(uint256 batchId, address user) external view returns (bytes32 commitmentHash, uint256 depositAmount, uint256 balanceAmount, bool balancePaid, bool slashed, uint256 joinedAt, uint256 paymentDeadline)",
   "function isParticipant(uint256 batchId, address user) external view returns (bool)",
   "function getParticipantAddress(uint256 batchId, uint256 index) external view returns (address)",
@@ -23,9 +25,12 @@ const BATCH_STATE_MACHINE_ABI = [
   "function transitionBatchState(uint256 batchId, uint8 newState) external",
   "function updateFullPrice(uint256 newPrice) external",
   "function withdrawFunds(uint256 amount) external",
+  "function withdrawSlashedFunds() external",
+  "function slashedFunds() external view returns (uint256)",
   "function removeParticipant(uint256 batchId, address user) external",
   "function setDepositPercentage(uint256 newPercentage) external",
   "function setBalancePercentage(uint256 newPercentage) external",
+  "function setPaymentPercentages(uint256 newDepositPercentage, uint256 newBalancePercentage) external",
   "function depositPercentage() external view returns (uint256)",
   "function balancePercentage() external view returns (uint256)",
   "function owner() external view returns (address)",
@@ -64,6 +69,7 @@ export const BATCH_STATE_NAMES: Record<BatchState, string> = {
 export interface BatchInfo {
   state: BatchState;
   participantCount: number;
+  activeParticipantCount: number;
   maxBatchSize: number;
   createdAt: number;
   stateChangedAt: number;
@@ -166,20 +172,20 @@ export async function getBatchInfo(batchId: number): Promise<BatchInfo> {
   const contract = getContract();
 
   try {
-    // Try new contract version with maxBatchSize
+    // Current contract version with activeParticipantCount
     const info = await contract.getBatchInfo(batchId);
     return {
       state: Number(info[0]) as BatchState,
       participantCount: Number(info[1]),
-      maxBatchSize: Number(info[2]),
-      createdAt: Number(info[3]),
-      stateChangedAt: Number(info[4]),
+      activeParticipantCount: Number(info[2]),
+      maxBatchSize: Number(info[3]),
+      createdAt: Number(info[4]),
+      stateChangedAt: Number(info[5]),
     };
   } catch (error: any) {
-    // Fallback for old contract version without maxBatchSize
+    // Fallback for old contract version without activeParticipantCount
     if (error.code === 'BAD_DATA') {
-      // Use old ABI temporarily
-      const oldABI = ["function getBatchInfo(uint256 batchId) external view returns (uint8 state, uint256 participantCount, uint256 createdAt, uint256 stateChangedAt)"];
+      const oldABI = ["function getBatchInfo(uint256 batchId) external view returns (uint8 state, uint256 participantCount, uint256 maxBatchSize, uint256 createdAt, uint256 stateChangedAt)"];
       const oldContract = new ethers.Contract(
         process.env.NEXT_PUBLIC_CONTRACT_ADDRESS!,
         oldABI,
@@ -189,9 +195,10 @@ export async function getBatchInfo(batchId: number): Promise<BatchInfo> {
       return {
         state: Number(info[0]) as BatchState,
         participantCount: Number(info[1]),
-        maxBatchSize: 24, // Default fallback
-        createdAt: Number(info[2]),
-        stateChangedAt: Number(info[3]),
+        activeParticipantCount: Number(info[1]), // Same as participantCount in old version
+        maxBatchSize: Number(info[2]),
+        createdAt: Number(info[3]),
+        stateChangedAt: Number(info[4]),
       };
     }
     throw error;
@@ -267,6 +274,14 @@ export async function canUserStillPay(
 }
 
 /**
+ * Check if all active participants have paid their balance
+ */
+export async function allParticipantsPaid(batchId: number): Promise<boolean> {
+  const contract = getContract();
+  return await contract.allParticipantsPaid(batchId);
+}
+
+/**
  * Check if address is owner
  */
 export async function isOwner(address: string): Promise<boolean> {
@@ -297,6 +312,21 @@ export async function payBalance(
 ) {
   const contract = getContractWithSigner(signer);
   const tx = await contract.payBalance(batchId);
+  return await tx.wait();
+}
+
+/**
+ * Manually mark balance as paid (admin only)
+ * Use case: Off-chain payments, manual corrections
+ */
+export async function markBalanceAsPaid(
+  batchId: number,
+  userAddress: string,
+  balanceAmount: bigint,
+  signer: ethers.Signer
+) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.markBalanceAsPaid(batchId, userAddress, balanceAmount);
   return await tx.wait();
 }
 
@@ -445,6 +475,20 @@ export async function setBalancePercentage(
   return await tx.wait();
 }
 
+/**
+ * Set both deposit and balance percentages atomically (admin only)
+ * Recommended method to avoid invariant violations during percentage updates
+ */
+export async function setPaymentPercentages(
+  depositPercentage: number,
+  balancePercentage: number,
+  signer: ethers.Signer
+) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.setPaymentPercentages(depositPercentage, balancePercentage);
+  return await tx.wait();
+}
+
 // ERC20 ABI for USDC interactions
 const ERC20_ABI = [
   "function approve(address spender, uint256 amount) external returns (bool)",
@@ -542,4 +586,21 @@ export async function unpauseContract(signer: ethers.Signer) {
 export async function isContractPaused(): Promise<boolean> {
   const contract = getContract();
   return await contract.paused();
+}
+
+/**
+ * Get total slashed funds available for withdrawal
+ */
+export async function getSlashedFunds(): Promise<bigint> {
+  const contract = getContract();
+  return await contract.slashedFunds();
+}
+
+/**
+ * Withdraw slashed funds (admin only)
+ */
+export async function withdrawSlashedFunds(signer: ethers.Signer) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.withdrawSlashedFunds();
+  return await tx.wait();
 }

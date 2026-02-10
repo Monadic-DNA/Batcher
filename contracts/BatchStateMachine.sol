@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
@@ -29,8 +30,8 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     struct Participant {
         address wallet;
         bytes32 commitmentHash; // Hash(KitID + PIN)
-        uint256 depositAmount;  // 10% initial deposit
-        uint256 balanceAmount;  // 90% balance payment
+        uint256 depositAmount;  // Initial deposit amount (set at join time)
+        uint256 balanceAmount;  // Balance payment amount (set at payment time)
         bool balancePaid;
         bool slashed;
         uint256 joinedAt;
@@ -41,7 +42,9 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     struct Batch {
         uint256 batchId;
         BatchState state;
-        uint256 participantCount;
+        uint256 participantCount;     // Total participants ever added (never decrements)
+        uint256 activeParticipantCount; // Current active participants (decrements on removal)
+        uint256 unpaidActiveParticipants; // Active participants who haven't paid balance (for O(1) payment check)
         uint256 maxBatchSize; // Size for this specific batch
         mapping(uint256 => Participant) participants; // index => participant
         mapping(address => uint256) participantIndex; // wallet => index
@@ -52,19 +55,25 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     // USDC token
     IERC20 public immutable usdcToken;
 
+    // Expected decimals for USDC (enforced at construction)
+    uint8 public constant EXPECTED_DECIMALS = 6;
+
     // Constants
     uint256 public constant PAYMENT_WINDOW = 7 days;
-    uint256 public constant CLAIM_WINDOW = 60 days;
     uint256 public constant PATIENCE_TIMER = 180 days; // 6 months
     uint256 public constant SLASH_PERCENTAGE = 1; // 1% penalty
 
     // Configurable parameters (can be updated by owner)
-    uint256 public depositPercentage = 10; // 10% deposit (default)
-    uint256 public balancePercentage = 90; // 90% balance (default)
-    uint256 public fullPrice = 100_000000; // 100 USDC (6 decimals)
+    uint256 public depositPrice = 10_000000; // 10 USDC deposit (6 decimals)
+
+    // Balance price per batch (set when transitioning Staged -> Active)
+    mapping(uint256 => uint256) public batchBalancePrice;
 
     // Batch size configuration
     uint256 public defaultBatchSize = 24; // Default size for new batches
+
+    // Slashed funds accumulator (admin can withdraw)
+    uint256 public slashedFunds;
 
     // State
     uint256 public currentBatchId;
@@ -75,17 +84,24 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     event UserJoined(uint256 indexed batchId, address indexed user, uint256 depositAmount);
     event BatchStateChanged(uint256 indexed batchId, BatchState newState, uint256 timestamp);
     event BalancePaymentReceived(uint256 indexed batchId, address indexed user, uint256 amount);
-    event UserSlashed(uint256 indexed batchId, address indexed user, uint256 penaltyAmount);
+    event BalanceManuallyMarked(uint256 indexed batchId, address indexed user, uint256 amount, bool wasSlashed, bool afterDeadline);
+    event UserSlashed(uint256 indexed batchId, address indexed user, uint256 penaltyAmount, uint256 remainingDeposit);
     event CommitmentHashStored(uint256 indexed batchId, address indexed user, bytes32 commitmentHash);
     event FundsWithdrawn(address indexed admin, uint256 amount);
+    event SlashedFundsWithdrawn(address indexed admin, uint256 amount);
     event DefaultBatchSizeChanged(uint256 oldSize, uint256 newSize, uint256 timestamp);
     event BatchSizeChanged(uint256 indexed batchId, uint256 oldSize, uint256 newSize, uint256 timestamp);
-    event ParticipantRemoved(uint256 indexed batchId, address indexed user, uint256 refundAmount);
-    event DepositPercentageChanged(uint256 oldPercentage, uint256 newPercentage);
-    event BalancePercentageChanged(uint256 oldPercentage, uint256 newPercentage);
+    event ParticipantRemoved(uint256 indexed batchId, address indexed user, uint256 refundAmount, bool balancePaid, bool slashed);
+    event DepositPriceChanged(uint256 oldPrice, uint256 newPrice);
+    event BalancePriceSet(uint256 indexed batchId, uint256 balancePrice);
 
     constructor(address _usdcToken) Ownable(msg.sender) {
         require(_usdcToken != address(0), "Invalid USDC address");
+
+        // Verify token has 6 decimals (standard for USDC)
+        uint8 decimals = IERC20Metadata(_usdcToken).decimals();
+        require(decimals == EXPECTED_DECIMALS, "Token must have 6 decimals");
+
         usdcToken = IERC20(_usdcToken);
 
         // Initialize first batch
@@ -105,20 +121,15 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     function joinBatch() external nonReentrant whenNotPaused {
         Batch storage batch = batches[currentBatchId];
         require(batch.state == BatchState.Pending, "Batch not accepting participants");
-        require(batch.participantCount < batch.maxBatchSize, "Batch is full");
+        require(batch.activeParticipantCount < batch.maxBatchSize, "Batch is full");
         require(batch.participantIndex[msg.sender] == 0, "Already joined this batch");
 
-        uint256 depositAmount = (fullPrice * depositPercentage) / 100;
-
-        // Transfer USDC from user to contract
-        usdcToken.safeTransferFrom(msg.sender, address(this), depositAmount);
-
-        // Add participant
+        // Add participant (EFFECTS - update state before external call)
         uint256 index = batch.participantCount + 1; // 1-indexed to distinguish from default 0
         batch.participants[index] = Participant({
             wallet: msg.sender,
             commitmentHash: bytes32(0),
-            depositAmount: depositAmount,
+            depositAmount: depositPrice,
             balanceAmount: 0,
             balancePaid: false,
             slashed: false,
@@ -127,45 +138,102 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         });
         batch.participantIndex[msg.sender] = index;
         batch.participantCount++;
+        batch.activeParticipantCount++;
 
-        emit UserJoined(currentBatchId, msg.sender, depositAmount);
+        emit UserJoined(currentBatchId, msg.sender, depositPrice);
+
+        // Transfer USDC from user to contract (INTERACTIONS - external call last)
+        usdcToken.safeTransferFrom(msg.sender, address(this), depositPrice);
 
         // Auto-transition to Staged if batch is full (optional)
         // Batch can also be manually progressed by admin with fewer participants
-        if (batch.participantCount == batch.maxBatchSize) {
+        if (batch.activeParticipantCount == batch.maxBatchSize) {
             _transitionBatchState(currentBatchId, BatchState.Staged);
         }
     }
 
     /**
      * @dev Pay the balance payment (called after batch becomes Active, uses USDC)
+     * Allows payment within payment window + patience timer (6 months grace period)
      */
     function payBalance(uint256 batchId) external nonReentrant whenNotPaused {
         Batch storage batch = batches[batchId];
         require(batch.state == BatchState.Active, "Batch not active");
+
+        uint256 balanceAmount = batchBalancePrice[batchId];
+        require(balanceAmount > 0, "Balance price not set for this batch");
 
         uint256 index = batch.participantIndex[msg.sender];
         require(index > 0, "Not a participant in this batch");
 
         Participant storage participant = batch.participants[index];
         require(!participant.balancePaid, "Balance already paid");
-        require(block.timestamp <= participant.paymentDeadline, "Payment window expired");
 
-        uint256 balanceAmount = (fullPrice * balancePercentage) / 100;
+        // Allow payment within deadline + patience timer (consistent with canStillPay)
+        require(
+            block.timestamp <= participant.paymentDeadline + PATIENCE_TIMER,
+            "Payment window and patience timer expired"
+        );
 
-        // Transfer USDC from user to contract
+        // Update state (EFFECTS - before external call)
+        participant.balanceAmount = balanceAmount;
+        participant.balancePaid = true;
+
+        // Decrement unpaid counter
+        batch.unpaidActiveParticipants--;
+
+        emit BalancePaymentReceived(batchId, msg.sender, balanceAmount);
+
+        // Transfer USDC from user to contract (INTERACTIONS - external call last)
         usdcToken.safeTransferFrom(msg.sender, address(this), balanceAmount);
+    }
+
+    /**
+     * @dev Manually mark a participant's balance as paid (admin only)
+     * Use case: Off-chain payments, manual corrections, pardons
+     *
+     * IMPORTANT: This function can bypass normal payment flow and slashing penalties.
+     * It allows admin to mark payment as received even:
+     * - After payment deadline
+     * - For participants who were slashed
+     * - Without reversing penalties
+     *
+     * This is intentional to provide flexibility for edge cases (e.g., bank transfers,
+     * payment disputes, goodwill gestures), but emits a distinct event for auditability.
+     *
+     * @param batchId The batch ID
+     * @param user The participant's address
+     * @param balanceAmount The amount to record (for accounting)
+     */
+    function markBalanceAsPaid(uint256 batchId, address user, uint256 balanceAmount) external onlyOwner {
+        Batch storage batch = batches[batchId];
+        require(batch.state == BatchState.Active, "Can only mark payment in Active state");
+
+        uint256 index = batch.participantIndex[user];
+        require(index > 0, "Not a participant in this batch");
+
+        Participant storage participant = batch.participants[index];
+        require(participant.wallet != address(0), "Participant has been removed");
+        require(!participant.balancePaid, "Balance already marked as paid");
+
+        // Capture state for audit trail
+        bool wasSlashed = participant.slashed;
+        bool afterDeadline = block.timestamp > participant.paymentDeadline;
 
         participant.balanceAmount = balanceAmount;
         participant.balancePaid = true;
 
-        emit BalancePaymentReceived(batchId, msg.sender, balanceAmount);
+        // Decrement unpaid counter
+        batch.unpaidActiveParticipants--;
+
+        // Emit distinct event to flag this bypassed normal payment flow
+        emit BalanceManuallyMarked(batchId, user, balanceAmount, wasSlashed, afterDeadline);
     }
 
     /**
      * @dev Store commitment hash (Hash(KitID + PIN))
      */
-    function storeCommitmentHash(uint256 batchId, bytes32 commitmentHash) external {
+    function storeCommitmentHash(uint256 batchId, bytes32 commitmentHash) external nonReentrant {
         Batch storage batch = batches[batchId];
         require(
             batch.state == BatchState.Active || batch.state == BatchState.Sequencing,
@@ -178,6 +246,7 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         Participant storage participant = batch.participants[index];
         require(participant.balancePaid, "Balance payment required first");
         require(participant.commitmentHash == bytes32(0), "Commitment already stored");
+        require(commitmentHash != bytes32(0), "Commitment hash cannot be zero");
 
         participant.commitmentHash = commitmentHash;
         emit CommitmentHashStored(batchId, msg.sender, commitmentHash);
@@ -185,9 +254,25 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @dev Admin function to transition batch state
+     * When transitioning from Staged to Active, balancePrice must be provided
      */
-    function transitionBatchState(uint256 batchId, BatchState newState) external onlyOwner {
+    function transitionBatchState(uint256 batchId, BatchState newState, uint256 balancePrice) external onlyOwner {
+        // Require balance price when transitioning Staged -> Active
+        if (batches[batchId].state == BatchState.Staged && newState == BatchState.Active) {
+            require(balancePrice > 0, "Balance price must be set when activating batch");
+            batchBalancePrice[batchId] = balancePrice;
+            emit BalancePriceSet(batchId, balancePrice);
+        }
+
         _transitionBatchState(batchId, newState);
+    }
+
+    /**
+     * @dev Check if all active participants have paid their balance (O(1))
+     */
+    function _allParticipantsPaid(uint256 batchId) internal view returns (bool) {
+        Batch storage batch = batches[batchId];
+        return batch.unpaidActiveParticipants == 0;
     }
 
     /**
@@ -197,14 +282,25 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         Batch storage batch = batches[batchId];
         require(uint8(newState) > uint8(batch.state), "Can only progress forward");
 
+        // Enforce payment requirement before Sequencing
+        if (newState == BatchState.Sequencing) {
+            require(_allParticipantsPaid(batchId), "All active participants must pay balance before sequencing");
+        }
+
         BatchState oldState = batch.state;
         batch.state = newState;
         batch.stateChangedAt = block.timestamp;
 
-        // Set payment deadlines when transitioning to Active
+        // Set payment deadlines when transitioning to Active (skip removed participants)
         if (newState == BatchState.Active) {
+            // Initialize unpaid counter to active participants when batch becomes Active
+            batch.unpaidActiveParticipants = batch.activeParticipantCount;
+
             for (uint256 i = 1; i <= batch.participantCount; i++) {
-                batch.participants[i].paymentDeadline = block.timestamp + PAYMENT_WINDOW;
+                // Skip removed participants (wallet == address(0))
+                if (batch.participants[i].wallet != address(0)) {
+                    batch.participants[i].paymentDeadline = block.timestamp + PAYMENT_WINDOW;
+                }
             }
         }
 
@@ -232,6 +328,7 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @dev Slash users who didn't pay balance within deadline (1% penalty)
+     * Penalty is deducted from deposit and added to slashedFunds
      */
     function slashUser(uint256 batchId, address user) external onlyOwner {
         Batch storage batch = batches[batchId];
@@ -245,11 +342,18 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         require(block.timestamp > participant.paymentDeadline, "Payment window not expired");
         require(!participant.slashed, "Already slashed");
 
-        // Apply 1% penalty
+        // Apply 1% penalty - deduct from deposit
         uint256 penaltyAmount = (participant.depositAmount * SLASH_PERCENTAGE) / 100;
+
+        // Deduct penalty from participant's deposit
+        participant.depositAmount -= penaltyAmount;
+
+        // Add to slashed funds (admin can withdraw later)
+        slashedFunds += penaltyAmount;
+
         participant.slashed = true;
 
-        emit UserSlashed(batchId, user, penaltyAmount);
+        emit UserSlashed(batchId, user, penaltyAmount, participant.depositAmount);
     }
 
     /**
@@ -261,6 +365,10 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         if (index == 0) return false;
 
         Participant storage participant = batch.participants[index];
+
+        // Check if participant has been removed
+        if (participant.wallet == address(0)) return false;
+
         if (participant.balancePaid) return false;
 
         // Can pay within 6-month patience timer even if slashed
@@ -268,20 +376,51 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @dev Update full price (admin only)
+     * @dev Update deposit price (admin only)
      */
-    function updateFullPrice(uint256 newPrice) external onlyOwner {
-        fullPrice = newPrice;
+    function setDepositPrice(uint256 newPrice) external onlyOwner {
+        require(newPrice > 0, "Deposit price must be greater than 0");
+        uint256 oldPrice = depositPrice;
+        depositPrice = newPrice;
+        emit DepositPriceChanged(oldPrice, newPrice);
+    }
+
+    /**
+     * @dev Set balance price for a specific batch (admin only)
+     * Can be called to update the balance price for a Staged batch before activation
+     */
+    function setBatchBalancePrice(uint256 batchId, uint256 balancePrice) external onlyOwner {
+        require(balancePrice > 0, "Balance price must be greater than 0");
+        Batch storage batch = batches[batchId];
+        require(batch.state == BatchState.Staged || batch.state == BatchState.Active, "Can only set price for Staged or Active batches");
+
+        batchBalancePrice[batchId] = balancePrice;
+        emit BalancePriceSet(batchId, balancePrice);
     }
 
     /**
      * @dev Withdraw collected USDC funds (admin only)
+     * Note: This withdraws from the general contract balance
      */
     function withdrawFunds(uint256 amount) external onlyOwner nonReentrant {
         uint256 contractBalance = usdcToken.balanceOf(address(this));
         require(amount <= contractBalance, "Insufficient contract balance");
         usdcToken.safeTransfer(owner(), amount);
         emit FundsWithdrawn(owner(), amount);
+    }
+
+    /**
+     * @dev Withdraw slashed funds (admin only)
+     * Separate from regular withdrawFunds to track penalty collections
+     */
+    function withdrawSlashedFunds() external onlyOwner nonReentrant {
+        uint256 amount = slashedFunds;
+        require(amount > 0, "No slashed funds available");
+
+        slashedFunds = 0;
+        usdcToken.safeTransfer(owner(), amount);
+
+        emit SlashedFundsWithdrawn(owner(), amount);
     }
 
     /**
@@ -296,6 +435,7 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         require(index > 0, "Not a participant in this batch");
 
         Participant storage participant = batch.participants[index];
+        require(participant.wallet != address(0), "Participant already removed");
 
         // Calculate refund amount (deposit + balance if paid)
         uint256 refundAmount = participant.depositAmount;
@@ -303,15 +443,25 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
             refundAmount += participant.balanceAmount;
         }
 
+        // Capture state before removal for event
+        bool wasBalancePaid = participant.balancePaid;
+        bool wasSlashed = participant.slashed;
+
         // Remove participant mapping
         batch.participantIndex[user] = 0;
 
-        // Note: We don't decrement participantCount or reorganize the array
-        // to maintain historical indices. The slot is marked as removed by
-        // setting the wallet address to zero.
+        // Mark as removed and decrement active count
         participant.wallet = address(0);
+        batch.activeParticipantCount--;
 
-        emit ParticipantRemoved(batchId, user, refundAmount);
+        // Decrement unpaid counter if participant hadn't paid yet
+        if (!wasBalancePaid) {
+            batch.unpaidActiveParticipants--;
+        }
+
+        // Note: We don't decrement participantCount to maintain historical indices
+
+        emit ParticipantRemoved(batchId, user, refundAmount, wasBalancePaid, wasSlashed);
 
         // Refund the participant in USDC
         if (refundAmount > 0) {
@@ -319,27 +469,6 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         }
     }
 
-    /**
-     * @dev Update deposit percentage (admin only)
-     */
-    function setDepositPercentage(uint256 newPercentage) external onlyOwner {
-        require(newPercentage > 0 && newPercentage < 100, "Invalid percentage");
-        require(newPercentage + balancePercentage == 100, "Percentages must sum to 100");
-        uint256 oldPercentage = depositPercentage;
-        depositPercentage = newPercentage;
-        emit DepositPercentageChanged(oldPercentage, newPercentage);
-    }
-
-    /**
-     * @dev Update balance percentage (admin only)
-     */
-    function setBalancePercentage(uint256 newPercentage) external onlyOwner {
-        require(newPercentage > 0 && newPercentage < 100, "Invalid percentage");
-        require(depositPercentage + newPercentage == 100, "Percentages must sum to 100");
-        uint256 oldPercentage = balancePercentage;
-        balancePercentage = newPercentage;
-        emit BalancePercentageChanged(oldPercentage, newPercentage);
-    }
 
     /**
      * @dev Get batch info
@@ -350,13 +479,22 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         returns (
             BatchState state,
             uint256 participantCount,
+            uint256 activeParticipantCount,
+            uint256 unpaidActiveParticipants,
             uint256 maxBatchSize,
             uint256 createdAt,
             uint256 stateChangedAt
         )
     {
         Batch storage batch = batches[batchId];
-        return (batch.state, batch.participantCount, batch.maxBatchSize, batch.createdAt, batch.stateChangedAt);
+        return (batch.state, batch.participantCount, batch.activeParticipantCount, batch.unpaidActiveParticipants, batch.maxBatchSize, batch.createdAt, batch.stateChangedAt);
+    }
+
+    /**
+     * @dev Check if all active participants have paid their balance (public view)
+     */
+    function allParticipantsPaid(uint256 batchId) external view returns (bool) {
+        return _allParticipantsPaid(batchId);
     }
 
     /**
@@ -426,14 +564,14 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         Batch storage batch = batches[batchId];
         require(batch.state == BatchState.Pending, "Can only modify pending batches");
         require(newSize > 0, "Batch size must be greater than 0");
-        require(newSize >= batch.participantCount, "Cannot set size below current participant count");
+        require(newSize >= batch.activeParticipantCount, "Cannot set size below active participant count");
 
         uint256 oldSize = batch.maxBatchSize;
         batch.maxBatchSize = newSize;
         emit BatchSizeChanged(batchId, oldSize, newSize, block.timestamp);
 
         // Auto-transition to Staged if batch is now full
-        if (batch.participantCount == newSize) {
+        if (batch.activeParticipantCount == newSize) {
             _transitionBatchState(batchId, BatchState.Staged);
         }
     }
