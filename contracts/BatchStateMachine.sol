@@ -56,15 +56,15 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     IERC20 public immutable usdcToken;
 
     // Expected decimals for USDC (enforced at construction)
-    uint8 public constant EXPECTED_DECIMALS = 6;
+    uint8 public constant EXPECTED_USDC_DECIMALS = 6;
 
     // Constants
-    uint256 public constant PAYMENT_WINDOW = 7 days;
-    uint256 public constant PATIENCE_TIMER = 180 days; // 6 months
-    uint256 public constant SLASH_PERCENTAGE = 1; // 1% penalty
+    uint256 public constant PAYMENT_WINDOW = 14 days;
+    uint256 public constant PATIENCE_TIMER = 14 days; // 2 week grace period (28 days total)
+    uint256 public constant SLASH_PERCENTAGE = 50; // 50% penalty
 
     // Configurable parameters (can be updated by owner)
-    uint256 public depositPrice = 10_000000; // 10 USDC deposit (6 decimals)
+    uint256 public depositPrice = 25_000000; // 10 USDC deposit (6 decimals)
 
     // Balance price per batch (set when transitioning Staged -> Active)
     mapping(uint256 => uint256) public batchBalancePrice;
@@ -100,7 +100,7 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
 
         // Verify token has 6 decimals (standard for USDC)
         uint8 decimals = IERC20Metadata(_usdcToken).decimals();
-        require(decimals == EXPECTED_DECIMALS, "Token must have 6 decimals");
+        require(decimals == EXPECTED_USDC_DECIMALS, "Token must have 6 decimals");
 
         usdcToken = IERC20(_usdcToken);
 
@@ -232,6 +232,7 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @dev Store commitment hash (Hash(KitID + PIN))
+     * Can be called multiple times to update the hash (e.g., kit swap, forgotten PIN)
      */
     function storeCommitmentHash(uint256 batchId, bytes32 commitmentHash) external nonReentrant {
         Batch storage batch = batches[batchId];
@@ -245,7 +246,6 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
 
         Participant storage participant = batch.participants[index];
         require(participant.balancePaid, "Balance payment required first");
-        require(participant.commitmentHash == bytes32(0), "Commitment already stored");
         require(commitmentHash != bytes32(0), "Commitment hash cannot be zero");
 
         participant.commitmentHash = commitmentHash;
@@ -276,14 +276,54 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
+     * @dev Slash all unpaid active participants (called before Sequencing transition)
+     * This ensures non-payers forfeit their entire remaining deposit
+     */
+    function _slashAllUnpaidParticipants(uint256 batchId) internal {
+        Batch storage batch = batches[batchId];
+        require(batch.state == BatchState.Active, "Can only slash in Active state");
+
+        for (uint256 i = 1; i <= batch.participantCount; i++) {
+            Participant storage participant = batch.participants[i];
+
+            // Skip removed participants
+            if (participant.wallet == address(0)) {
+                continue;
+            }
+
+            // Skip already paid participants
+            if (participant.balancePaid) {
+                continue;
+            }
+
+            // Only slash if payment deadline has passed and not already slashed
+            if (block.timestamp > participant.paymentDeadline && !participant.slashed) {
+                // Apply 50% penalty - deduct from deposit
+                uint256 penaltyAmount = (participant.depositAmount * SLASH_PERCENTAGE) / 100;
+
+                // Deduct penalty from participant's deposit
+                participant.depositAmount -= penaltyAmount;
+
+                // Add to slashed funds (admin can withdraw later)
+                slashedFunds += penaltyAmount;
+
+                participant.slashed = true;
+
+                emit UserSlashed(batchId, participant.wallet, penaltyAmount, participant.depositAmount);
+            }
+        }
+    }
+
+    /**
      * @dev Internal function to handle state transitions
      */
     function _transitionBatchState(uint256 batchId, BatchState newState) internal {
         Batch storage batch = batches[batchId];
         require(uint8(newState) > uint8(batch.state), "Can only progress forward");
 
-        // Enforce payment requirement before Sequencing
+        // Auto-slash all unpaid participants before Sequencing
         if (newState == BatchState.Sequencing) {
+            _slashAllUnpaidParticipants(batchId);
             require(_allParticipantsPaid(batchId), "All active participants must pay balance before sequencing");
         }
 
@@ -327,7 +367,7 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @dev Slash users who didn't pay balance within deadline (1% penalty)
+     * @dev Slash users who didn't pay balance within deadline
      * Penalty is deducted from deposit and added to slashedFunds
      */
     function slashUser(uint256 batchId, address user) external onlyOwner {
@@ -342,7 +382,7 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         require(block.timestamp > participant.paymentDeadline, "Payment window not expired");
         require(!participant.slashed, "Already slashed");
 
-        // Apply 1% penalty - deduct from deposit
+        // Apply penalty - deduct from deposit
         uint256 penaltyAmount = (participant.depositAmount * SLASH_PERCENTAGE) / 100;
 
         // Deduct penalty from participant's deposit
@@ -401,6 +441,7 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     /**
      * @dev Withdraw collected USDC funds (admin only)
      * Note: This withdraws from the general contract balance
+     * This is an emergency value for the admin to get around serious bugs
      */
     function withdrawFunds(uint256 amount) external onlyOwner nonReentrant {
         uint256 contractBalance = usdcToken.balanceOf(address(this));
@@ -426,6 +467,14 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     /**
      * @dev Remove participant and refund their payments in USDC (admin only)
      * Can be called at any time before batch is Completed
+     *
+     * Refund logic:
+     * - Before payment deadline: Full deposit refunded (no penalty)
+     * - After slashing: Remaining deposit after penalty refunded
+     * - If balance was paid: Both deposit and balance refunded
+     *
+     * Note: To forfeit deposits of non-payers, transition batch to Sequencing
+     * (which auto-slashes all unpaid users), then remove them.
      */
     function removeParticipant(uint256 batchId, address user) external onlyOwner nonReentrant {
         Batch storage batch = batches[batchId];
