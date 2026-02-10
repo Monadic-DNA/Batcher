@@ -2,8 +2,12 @@ import { ethers } from "ethers";
 
 // Smart contract ABI (from compiled contracts/BatchStateMachine.sol)
 const BATCH_STATE_MACHINE_ABI = [
-  "function joinBatch() external payable",
-  "function payBalance(uint256 batchId) external payable",
+  "function joinBatch() external",
+  "function payBalance(uint256 batchId) external",
+  "function usdcToken() external view returns (address)",
+  "function pause() external",
+  "function unpause() external",
+  "function paused() external view returns (bool)",
   "function storeCommitmentHash(uint256 batchId, bytes32 commitmentHash) external",
   "function slashUser(uint256 batchId, address user) external",
   "function canStillPay(uint256 batchId, address user) external view returns (bool)",
@@ -19,6 +23,11 @@ const BATCH_STATE_MACHINE_ABI = [
   "function transitionBatchState(uint256 batchId, uint8 newState) external",
   "function updateFullPrice(uint256 newPrice) external",
   "function withdrawFunds(uint256 amount) external",
+  "function removeParticipant(uint256 batchId, address user) external",
+  "function setDepositPercentage(uint256 newPercentage) external",
+  "function setBalancePercentage(uint256 newPercentage) external",
+  "function depositPercentage() external view returns (uint256)",
+  "function balancePercentage() external view returns (uint256)",
   "function owner() external view returns (address)",
   "event BatchCreated(uint256 indexed batchId, uint256 maxBatchSize, uint256 timestamp)",
   "event UserJoined(uint256 indexed batchId, address indexed user, uint256 depositAmount)",
@@ -29,6 +38,9 @@ const BATCH_STATE_MACHINE_ABI = [
   "event FundsWithdrawn(address indexed admin, uint256 amount)",
   "event DefaultBatchSizeChanged(uint256 oldSize, uint256 newSize, uint256 timestamp)",
   "event BatchSizeChanged(uint256 indexed batchId, uint256 oldSize, uint256 newSize, uint256 timestamp)",
+  "event ParticipantRemoved(uint256 indexed batchId, address indexed user, uint256 refundAmount)",
+  "event DepositPercentageChanged(uint256 oldPercentage, uint256 newPercentage)",
+  "event BalancePercentageChanged(uint256 oldPercentage, uint256 newPercentage)",
 ];
 
 export enum BatchState {
@@ -265,26 +277,26 @@ export async function isOwner(address: string): Promise<boolean> {
 
 /**
  * Join batch (requires signer) - joins current pending batch
+ * User must have approved USDC spending before calling this
  */
 export async function joinBatch(
-  depositAmount: bigint,
   signer: ethers.Signer
 ) {
   const contract = getContractWithSigner(signer);
-  const tx = await contract.joinBatch({ value: depositAmount });
+  const tx = await contract.joinBatch();
   return await tx.wait();
 }
 
 /**
  * Pay balance (requires signer)
+ * User must have approved USDC spending before calling this
  */
 export async function payBalance(
   batchId: number,
-  balanceAmount: bigint,
   signer: ethers.Signer
 ) {
   const contract = getContractWithSigner(signer);
-  const tx = await contract.payBalance(batchId, { value: balanceAmount });
+  const tx = await contract.payBalance(batchId);
   return await tx.wait();
 }
 
@@ -376,4 +388,158 @@ export async function setBatchSize(
   const contract = getContractWithSigner(signer);
   const tx = await contract.setBatchSize(batchId, newSize);
   return await tx.wait();
+}
+
+/**
+ * Remove participant and refund them (admin only)
+ */
+export async function removeParticipant(
+  batchId: number,
+  userAddress: string,
+  signer: ethers.Signer
+) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.removeParticipant(batchId, userAddress);
+  return await tx.wait();
+}
+
+/**
+ * Get deposit percentage
+ */
+export async function getDepositPercentage(): Promise<number> {
+  const contract = getContract();
+  const percentage = await contract.depositPercentage();
+  return Number(percentage);
+}
+
+/**
+ * Get balance percentage
+ */
+export async function getBalancePercentage(): Promise<number> {
+  const contract = getContract();
+  const percentage = await contract.balancePercentage();
+  return Number(percentage);
+}
+
+/**
+ * Set deposit percentage (admin only)
+ */
+export async function setDepositPercentage(
+  newPercentage: number,
+  signer: ethers.Signer
+) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.setDepositPercentage(newPercentage);
+  return await tx.wait();
+}
+
+/**
+ * Set balance percentage (admin only)
+ */
+export async function setBalancePercentage(
+  newPercentage: number,
+  signer: ethers.Signer
+) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.setBalancePercentage(newPercentage);
+  return await tx.wait();
+}
+
+// ERC20 ABI for USDC interactions
+const ERC20_ABI = [
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function allowance(address owner, address spender) external view returns (uint256)",
+  "function balanceOf(address account) external view returns (uint256)",
+  "function decimals() external view returns (uint8)",
+  "function symbol() external view returns (string)",
+];
+
+/**
+ * Get USDC token address from contract
+ */
+export async function getUsdcTokenAddress(): Promise<string> {
+  const contract = getContract();
+  return await contract.usdcToken();
+}
+
+/**
+ * Get USDC contract instance
+ */
+export function getUsdcContract(signerOrProvider?: ethers.Signer | ethers.Provider) {
+  const usdcAddress = process.env.NEXT_PUBLIC_USDC_ADDRESS;
+  if (!usdcAddress) {
+    throw new Error("USDC address not configured");
+  }
+  return new ethers.Contract(
+    usdcAddress,
+    ERC20_ABI,
+    signerOrProvider || getProvider()
+  );
+}
+
+/**
+ * Approve USDC spending for the contract
+ */
+export async function approveUsdcSpending(
+  amount: bigint,
+  signer: ethers.Signer
+) {
+  const contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS;
+  if (!contractAddress) {
+    throw new Error("Contract address not configured");
+  }
+
+  const usdcContract = getUsdcContract(signer);
+  const tx = await usdcContract.approve(contractAddress, amount);
+  return await tx.wait();
+}
+
+/**
+ * Check USDC allowance
+ */
+export async function getUsdcAllowance(
+  ownerAddress: string,
+  spenderAddress?: string
+): Promise<bigint> {
+  const contractAddress = spenderAddress || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS;
+  if (!contractAddress) {
+    throw new Error("Contract address not configured");
+  }
+
+  const usdcContract = getUsdcContract();
+  return await usdcContract.allowance(ownerAddress, contractAddress);
+}
+
+/**
+ * Get USDC balance
+ */
+export async function getUsdcBalance(address: string): Promise<bigint> {
+  const usdcContract = getUsdcContract();
+  return await usdcContract.balanceOf(address);
+}
+
+/**
+ * Pause contract (admin only)
+ */
+export async function pauseContract(signer: ethers.Signer) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.pause();
+  return await tx.wait();
+}
+
+/**
+ * Unpause contract (admin only)
+ */
+export async function unpauseContract(signer: ethers.Signer) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.unpause();
+  return await tx.wait();
+}
+
+/**
+ * Check if contract is paused
+ */
+export async function isContractPaused(): Promise<boolean> {
+  const contract = getContract();
+  return await contract.paused();
 }

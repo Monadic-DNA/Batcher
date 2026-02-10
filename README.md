@@ -48,13 +48,13 @@ A privacy-preserving DNA testing batch coordination system built with Next.js, T
   - Rate limiting and origin validation
 
 ### Payment Integration
-- ✅ **Stripe API Routes**
-  - `/api/payment/create-deposit` - 10% deposit payment
-  - `/api/payment/create-balance` - 90% balance payment
-  - One-time payment sessions with metadata
+- ✅ **USDC Payment System**
+  - ERC20 token approval flow for deposits and balance payments
+  - Two-step process: approve USDC spending, then make payment
+  - Configurable deposit/balance percentage split
 - ✅ **Batch Status API**
   - `/api/check-batch` - Query user's batch participation
-  - Smart contract integration ready (placeholder implementation)
+  - Smart contract integration with ethers.js v6
 
 ### Frontend Integration
 - ✅ Updated app layout with AuthProvider
@@ -85,20 +85,25 @@ A privacy-preserving DNA testing batch coordination system built with Next.js, T
 ## Smart Contract Features
 
 ### Batch State Machine
-- **Max batch size**: 24 participants
-- **Deposit**: 10% of full price (0.01 ETH default)
-- **Balance payment**: 90% of full price (0.09 ETH default)
+- **Max batch size**: Configurable (24 default)
+- **Payment token**: USDC (6 decimals)
+- **Deposit**: Configurable percentage (10% default = 10 USDC)
+- **Balance payment**: Configurable percentage (90% default = 90 USDC)
+- **Full price**: Configurable (100 USDC default)
 - **Payment window**: 7 days after batch activation
 - **Slashing penalty**: 1% of deposit
 - **Patience timer**: 6 months extension after deadline
 - **Claim window**: 60 days for results
+- **Emergency pause**: Admin can pause joins and payments
 
 ### Key Functions
-- `joinBatch()` - Join current pending batch with 10% deposit
-- `payBalance()` - Pay 90% balance within payment window
+- `joinBatch()` - Join current pending batch (USDC transfer via approval)
+- `payBalance()` - Pay balance within payment window (USDC transfer via approval)
 - `storeCommitmentHash()` - Store Hash(KitID + PIN) for privacy
+- `removeParticipant()` - Admin function to remove and refund participant
 - `slashUser()` - Admin function to slash late payers
 - `transitionBatchState()` - Admin function for state progression
+- `pause()`/`unpause()` - Emergency controls
 
 ## Getting Started
 
@@ -128,14 +133,8 @@ NEXT_PUBLIC_NILLION_COLLECTION_ID=your_nillion_collection_id
 NEXT_PUBLIC_CONTRACT_ADDRESS=0x...
 NEXT_PUBLIC_RPC_URL=http://localhost:8545
 
-# Stripe (Payments)
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
-STRIPE_SECRET_KEY=sk_test_...
-
-# Pricing (in cents)
-NEXT_PUBLIC_DEPOSIT_AMOUNT=1000
-NEXT_PUBLIC_BALANCE_AMOUNT=9000
-NEXT_PUBLIC_TOTAL_AMOUNT=10000
+# USDC Token Address (network-specific)
+NEXT_PUBLIC_USDC_ADDRESS=0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238  # Sepolia testnet
 
 # Batch Configuration
 NEXT_PUBLIC_MAX_BATCH_SIZE=24
@@ -155,9 +154,11 @@ CRON_SECRET=your_secure_random_string
 
 **Required for basic functionality:**
 - `NEXT_PUBLIC_DYNAMIC_ENVIRONMENT_ID` - Get from [Dynamic.xyz dashboard](https://app.dynamic.xyz)
-- `NEXT_PUBLIC_CONTRACT_ADDRESS` - Deploy `BatchStateMachine.sol` and use the address
-- `STRIPE_SECRET_KEY` - Get from [Stripe dashboard](https://dashboard.stripe.com/test/apikeys)
-- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` - Get from Stripe dashboard
+- `NEXT_PUBLIC_CONTRACT_ADDRESS` - Deploy `BatchStateMachine.sol` (with USDC address) and use the address
+- `NEXT_PUBLIC_USDC_ADDRESS` - USDC token contract address for your network
+  - Sepolia: `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`
+  - Base: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+  - Arbitrum: `0xaf88d065e77c8cC2239327C5EDb3A432268e5831`
 
 **Blockchain Provider (choose one):**
 - `ALCHEMY_API_KEY` - **Recommended**: Get from [Alchemy dashboard](https://dashboard.alchemy.com/) for reliable RPC with enhanced features
@@ -205,10 +206,12 @@ npx hardhat node
 
 In another terminal, deploy the contract:
 ```bash
+# First, deploy a mock USDC token for testing (if not using real testnet USDC)
+# Then deploy BatchStateMachine with USDC address
 npx hardhat run scripts/deploy.ts --network localhost
 ```
 
-Copy the deployed contract address to your `.env.local` as `NEXT_PUBLIC_CONTRACT_ADDRESS`.
+Copy the deployed contract address to your `.env.local` as `NEXT_PUBLIC_CONTRACT_ADDRESS` and the USDC address as `NEXT_PUBLIC_USDC_ADDRESS`.
 
 ### Smart Contract Testing
 
@@ -225,12 +228,12 @@ All 35 tests passing:
 
 ## Technology Stack
 
-- **Frontend**: Next.js 15, React 18, TypeScript 5
+- **Frontend**: Next.js 16, React 19, TypeScript 5
 - **Styling**: Tailwind CSS, shadcn/ui
 - **Authentication**: Dynamic.xyz (wallet connection + account abstraction)
 - **Privacy Layer**: Nillion (nilDB for encrypted data storage)
-- **Payments**: Stripe (fiat), Ethers.js (on-chain payments)
-- **Smart Contracts**: Solidity 0.8.27, Hardhat, OpenZeppelin
+- **Payments**: USDC only (ERC20 token via Ethers.js v6)
+- **Smart Contracts**: Solidity 0.8.27, Hardhat, OpenZeppelin (SafeERC20, Pausable)
 - **Testing**: Hardhat, Chai, Ethers.js v6
 - **Code Quality**: ESLint, Prettier
 
@@ -247,10 +250,10 @@ All 35 tests passing:
 ## Phase 4 Implementation Status ✅
 
 ### Modal System (Mobile-Optimized)
-- ✅ **JoinQueueModal** - Batch join flow with crypto/card payment options
+- ✅ **JoinQueueModal** - Batch join flow with USDC approval and payment (2-step)
 - ✅ **ShippingMetadataModal** - Encrypted shipping info + optional metadata
 - ✅ **KitRegistrationModal** - PIN creation with Kit ID registration
-- ✅ **BalancePaymentModal** - Balance payment with real-time countdown
+- ✅ **BalancePaymentModal** - USDC balance payment with approval flow and real-time countdown
 - ✅ **DataRevealModal** - PIN verification + CSV download with preview
 - ✅ All modals integrated into dashboard with proper state management
 

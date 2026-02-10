@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, CreditCard, Wallet } from "lucide-react";
+import { X, Wallet } from "lucide-react";
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { ethers } from "ethers";
-import { joinBatch, getFullPrice } from "@/lib/contract";
+import { joinBatch, getFullPrice, approveUsdcSpending, getUsdcAllowance, getDepositPercentage, getBalancePercentage } from "@/lib/contract";
 
 interface JoinQueueModalProps {
   isOpen: boolean;
@@ -15,8 +15,6 @@ interface JoinQueueModalProps {
   maxSize: number;
 }
 
-type PaymentMethod = "crypto" | "card" | null;
-
 export function JoinQueueModal({
   isOpen,
   onClose,
@@ -25,25 +23,33 @@ export function JoinQueueModal({
   currentCount,
   maxSize,
 }: JoinQueueModalProps) {
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(null);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pricing, setPricing] = useState<{ deposit: number; total: number } | null>(null);
+  const [needsApproval, setNeedsApproval] = useState(true);
+  const [pricing, setPricing] = useState<{ deposit: number; total: number; depositPercent: number; balancePercent: number } | null>(null);
+
+  const { primaryWallet } = useDynamicContext();
 
   // Fetch pricing from smart contract
   useEffect(() => {
     const fetchPricing = async () => {
       try {
         const fullPrice = await getFullPrice();
-        const fullPriceInEth = Number(ethers.formatEther(fullPrice));
+        const depositPercent = await getDepositPercentage();
+        const balancePercent = await getBalancePercentage();
+
+        // USDC has 6 decimals
+        const fullPriceInUsdc = Number(fullPrice) / 1e6;
         setPricing({
-          deposit: fullPriceInEth * 0.1,
-          total: fullPriceInEth,
+          deposit: fullPriceInUsdc * (depositPercent / 100),
+          total: fullPriceInUsdc,
+          depositPercent,
+          balancePercent,
         });
       } catch (err) {
         console.error("Failed to fetch pricing:", err);
         // Fallback to default values
-        setPricing({ deposit: 0.01, total: 0.1 });
+        setPricing({ deposit: 10, total: 100, depositPercent: 10, balancePercent: 90 });
       }
     };
 
@@ -52,9 +58,67 @@ export function JoinQueueModal({
     }
   }, [isOpen]);
 
-  const { primaryWallet } = useDynamicContext();
+  // Check if USDC approval is needed
+  useEffect(() => {
+    const checkApproval = async () => {
+      if (!primaryWallet || !pricing) return;
 
-  const handleCryptoPayment = async () => {
+      try {
+        const address = primaryWallet.address;
+        const allowance = await getUsdcAllowance(address);
+        const depositAmount = BigInt(Math.floor(pricing.deposit * 1e6));
+
+        setNeedsApproval(allowance < depositAmount);
+      } catch (err) {
+        console.error("Failed to check USDC allowance:", err);
+      }
+    };
+
+    if (isOpen && primaryWallet && pricing) {
+      checkApproval();
+    }
+  }, [isOpen, primaryWallet, pricing]);
+
+  const handleApprove = async () => {
+    setProcessing(true);
+    setError(null);
+    try {
+      if (!primaryWallet || !pricing) {
+        throw new Error("Wallet not connected or pricing not loaded");
+      }
+
+      const walletConnector = await primaryWallet.connector;
+      if (!walletConnector) {
+        throw new Error("Wallet connector not available");
+      }
+
+      const provider = await walletConnector.getWalletClient();
+      if (!provider) {
+        throw new Error("Provider not available");
+      }
+
+      const ethersProvider = new ethers.BrowserProvider(provider as any);
+      const signer = await ethersProvider.getSigner();
+
+      // Approve a large amount for convenience (or just the deposit amount)
+      const approvalAmount = BigInt(Math.floor(pricing.total * 1e6)); // Approve full price
+
+      console.log("Approving USDC spending:", pricing.total, "USDC");
+      const receipt = await approveUsdcSpending(approvalAmount, signer);
+      console.log("Approval successful:", receipt.transactionHash);
+
+      setNeedsApproval(false);
+    } catch (err) {
+      console.error("Approval error:", err);
+      setError(
+        err instanceof Error ? err.message : "USDC approval failed. Please try again."
+      );
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleJoin = async () => {
     setProcessing(true);
     setError(null);
     try {
@@ -62,80 +126,33 @@ export function JoinQueueModal({
         throw new Error("Please connect your wallet first");
       }
 
-      // Get the wallet connector
       const walletConnector = await primaryWallet.connector;
       if (!walletConnector) {
         throw new Error("Wallet connector not available");
       }
 
-      // Get provider from Dynamic wallet
       const provider = await walletConnector.getWalletClient();
       if (!provider) {
         throw new Error("Provider not available");
       }
 
-      // Create ethers provider and signer from Dynamic's provider
       const ethersProvider = new ethers.BrowserProvider(provider as any);
       const signer = await ethersProvider.getSigner();
 
-      // Get full price from contract and calculate deposit (10%)
-      const fullPrice = await getFullPrice();
-      const depositAmount = (fullPrice * 10n) / 100n;
+      console.log("Joining batch with USDC deposit:", pricing?.deposit, "USDC");
 
-      console.log("Joining batch with deposit:", ethers.formatEther(depositAmount));
-
-      // Call smart contract joinBatch() function
-      const receipt = await joinBatch(depositAmount, signer);
-
+      const receipt = await joinBatch(signer);
       console.log("Transaction successful:", receipt.transactionHash);
 
       onJoinSuccess();
       onClose();
     } catch (err) {
-      console.error("Crypto payment error:", err);
+      console.error("Join batch error:", err);
       setError(
-        err instanceof Error ? err.message : "Crypto payment failed. Please try again."
+        err instanceof Error ? err.message : "Failed to join batch. Please try again."
       );
     } finally {
       setProcessing(false);
-    }
-  };
-
-  const handleCardPayment = async () => {
-    setProcessing(true);
-    setError(null);
-    try {
-      // Call Stripe API to create checkout session
-      const response = await fetch("/api/payment/create-deposit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          batchId,
-          walletAddress: "0x...", // TODO: Get from auth context
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to create payment session");
-      }
-
-      const { url } = await response.json();
-      // Redirect to Stripe checkout
-      window.location.href = url;
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Card payment failed. Please try again."
-      );
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const handlePayment = () => {
-    if (paymentMethod === "crypto") {
-      handleCryptoPayment();
-    } else if (paymentMethod === "card") {
-      handleCardPayment();
     }
   };
 
@@ -176,23 +193,23 @@ export function JoinQueueModal({
 
           {/* Pricing Breakdown */}
           <div className="space-y-3">
-            <h3 className="font-semibold text-gray-900">Pricing</h3>
+            <h3 className="font-semibold text-gray-900">Pricing (USDC)</h3>
             {pricing ? (
               <div className="bg-gray-50 rounded-lg p-4 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600">Total Cost</span>
-                  <span className="font-medium">{pricing.total.toFixed(4)} ETH</span>
+                  <span className="font-medium">{pricing.total.toFixed(2)} USDC</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Deposit (Now)</span>
+                  <span className="text-gray-600">Deposit (Now - {pricing.depositPercent}%)</span>
                   <span className="font-bold text-blue-600">
-                    {pricing.deposit.toFixed(4)} ETH
+                    {pricing.deposit.toFixed(2)} USDC
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Balance (Later)</span>
+                  <span className="text-gray-600">Balance (Later - {pricing.balancePercent}%)</span>
                   <span className="font-medium">
-                    {(pricing.total - pricing.deposit).toFixed(4)} ETH
+                    {(pricing.total - pricing.deposit).toFixed(2)} USDC
                   </span>
                 </div>
               </div>
@@ -202,121 +219,58 @@ export function JoinQueueModal({
               </div>
             )}
             <p className="text-xs text-gray-500">
-              Pay 10% deposit now to join. You&apos;ll pay the remaining 90% when the
+              Pay {pricing?.depositPercent}% deposit now to join. You&apos;ll pay the remaining {pricing?.balancePercent}% when the
               batch becomes active (within 7 days).
             </p>
           </div>
 
-          {/* Payment Method Selection */}
-          {!paymentMethod && (
-            <div className="space-y-3">
-              <h3 className="font-semibold text-gray-900">Choose Payment Method</h3>
-              <button
-                onClick={() => setPaymentMethod("card")}
-                className="w-full flex items-center justify-between p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-all"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                    <CreditCard className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <div className="text-left">
-                    <p className="font-medium text-gray-900">Credit/Debit Card</p>
-                    <p className="text-xs text-gray-500">Fast and secure payment</p>
-                  </div>
-                </div>
-                <svg
-                  className="w-5 h-5 text-gray-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 5l7 7-7 7"
-                  />
-                </svg>
-              </button>
-
-              <button
-                onClick={() => setPaymentMethod("crypto")}
-                className="w-full flex items-center justify-between p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-all"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                    <Wallet className="w-5 h-5 text-green-600" />
-                  </div>
-                  <div className="text-left">
-                    <p className="font-medium text-gray-900">Ethereum / USDC</p>
-                    <p className="text-xs text-gray-500">For advanced users</p>
-                  </div>
-                </div>
-                <svg
-                  className="w-5 h-5 text-gray-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 5l7 7-7 7"
-                  />
-                </svg>
-              </button>
+          {/* Error Display */}
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-sm text-red-700">{error}</p>
             </div>
           )}
 
-          {/* Payment Confirmation */}
-          {paymentMethod && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between bg-gray-50 rounded-lg p-4">
-                <span className="text-sm text-gray-600">Payment Method</span>
-                <div className="flex items-center gap-2">
-                  {paymentMethod === "crypto" ? (
-                    <Wallet className="w-4 h-4 text-green-600" />
-                  ) : (
-                    <CreditCard className="w-4 h-4 text-blue-600" />
-                  )}
-                  <span className="font-medium">
-                    {paymentMethod === "crypto" ? "Ethereum/USDC" : "Card"}
-                  </span>
+          {/* Action Buttons */}
+          <div className="space-y-3">
+            {needsApproval ? (
+              <>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="text-sm text-blue-800">
+                    <strong>Step 1 of 2:</strong> Approve USDC spending to allow the contract to transfer tokens.
+                  </p>
                 </div>
-              </div>
-
-              {error && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                  <p className="text-sm text-red-700">{error}</p>
-                </div>
-              )}
-
-              <div className="flex gap-3">
                 <button
-                  onClick={() => {
-                    setPaymentMethod(null);
-                    setError(null);
-                  }}
-                  className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-                  disabled={processing}
-                >
-                  Back
-                </button>
-                <button
-                  onClick={handlePayment}
+                  onClick={handleApprove}
                   disabled={processing || !pricing}
-                  className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
+                  <Wallet className="w-5 h-5" />
+                  {processing ? "Approving..." : "Approve USDC"}
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                  <p className="text-sm text-green-800">
+                    <strong>Step 2 of 2:</strong> Join the batch with your USDC deposit.
+                  </p>
+                </div>
+                <button
+                  onClick={handleJoin}
+                  disabled={processing || !pricing}
+                  className="w-full px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <Wallet className="w-5 h-5" />
                   {processing
-                    ? "Processing..."
+                    ? "Joining..."
                     : pricing
-                      ? `Pay ${pricing.deposit.toFixed(4)} ETH`
+                      ? `Join with ${pricing.deposit.toFixed(2)} USDC`
                       : "Loading..."}
                 </button>
-              </div>
-            </div>
-          )}
+              </>
+            )}
+          </div>
 
           {/* Terms */}
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">

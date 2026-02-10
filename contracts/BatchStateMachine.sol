@@ -3,13 +3,18 @@ pragma solidity ^0.8.27;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
  * @title BatchStateMachine
  * @dev Manages DNA testing batches with state machine, deposits, and privacy commitments
  * State Flow: Pending → Staged → Active → Sequencing → Completed → Purged
+ * Payments in USDC stablecoin
  */
-contract BatchStateMachine is Ownable, ReentrancyGuard {
+contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
+    using SafeERC20 for IERC20;
     // Batch states
     enum BatchState {
         Pending,    // Collecting users (0-23)
@@ -44,16 +49,19 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
         uint256 stateChangedAt;
     }
 
+    // USDC token
+    IERC20 public immutable usdcToken;
+
     // Constants
-    uint256 public constant DEPOSIT_PERCENTAGE = 10; // 10% deposit
-    uint256 public constant BALANCE_PERCENTAGE = 90; // 90% balance
     uint256 public constant PAYMENT_WINDOW = 7 days;
     uint256 public constant CLAIM_WINDOW = 60 days;
     uint256 public constant PATIENCE_TIMER = 180 days; // 6 months
     uint256 public constant SLASH_PERCENTAGE = 1; // 1% penalty
 
-    // Pricing (can be updated by owner)
-    uint256 public fullPrice = 0.1 ether; // Example: 0.1 ETH or equivalent USDC
+    // Configurable parameters (can be updated by owner)
+    uint256 public depositPercentage = 10; // 10% deposit (default)
+    uint256 public balancePercentage = 90; // 90% balance (default)
+    uint256 public fullPrice = 100_000000; // 100 USDC (6 decimals)
 
     // Batch size configuration
     uint256 public defaultBatchSize = 24; // Default size for new batches
@@ -72,8 +80,14 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
     event FundsWithdrawn(address indexed admin, uint256 amount);
     event DefaultBatchSizeChanged(uint256 oldSize, uint256 newSize, uint256 timestamp);
     event BatchSizeChanged(uint256 indexed batchId, uint256 oldSize, uint256 newSize, uint256 timestamp);
+    event ParticipantRemoved(uint256 indexed batchId, address indexed user, uint256 refundAmount);
+    event DepositPercentageChanged(uint256 oldPercentage, uint256 newPercentage);
+    event BalancePercentageChanged(uint256 oldPercentage, uint256 newPercentage);
 
-    constructor() Ownable(msg.sender) {
+    constructor(address _usdcToken) Ownable(msg.sender) {
+        require(_usdcToken != address(0), "Invalid USDC address");
+        usdcToken = IERC20(_usdcToken);
+
         // Initialize first batch
         currentBatchId = 1;
         Batch storage batch = batches[currentBatchId];
@@ -86,16 +100,18 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @dev Join the current pending batch with 10% deposit
+     * @dev Join the current pending batch with deposit (uses USDC)
      */
-    function joinBatch() external payable nonReentrant {
+    function joinBatch() external nonReentrant whenNotPaused {
         Batch storage batch = batches[currentBatchId];
         require(batch.state == BatchState.Pending, "Batch not accepting participants");
         require(batch.participantCount < batch.maxBatchSize, "Batch is full");
         require(batch.participantIndex[msg.sender] == 0, "Already joined this batch");
 
-        uint256 depositAmount = (fullPrice * DEPOSIT_PERCENTAGE) / 100;
-        require(msg.value >= depositAmount, "Insufficient deposit");
+        uint256 depositAmount = (fullPrice * depositPercentage) / 100;
+
+        // Transfer USDC from user to contract
+        usdcToken.safeTransferFrom(msg.sender, address(this), depositAmount);
 
         // Add participant
         uint256 index = batch.participantCount + 1; // 1-indexed to distinguish from default 0
@@ -114,22 +130,17 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
 
         emit UserJoined(currentBatchId, msg.sender, depositAmount);
 
-        // Refund excess payment
-        if (msg.value > depositAmount) {
-            (bool success, ) = payable(msg.sender).call{value: msg.value - depositAmount}("");
-            require(success, "Refund failed");
-        }
-
-        // Auto-transition to Staged if batch is full
+        // Auto-transition to Staged if batch is full (optional)
+        // Batch can also be manually progressed by admin with fewer participants
         if (batch.participantCount == batch.maxBatchSize) {
             _transitionBatchState(currentBatchId, BatchState.Staged);
         }
     }
 
     /**
-     * @dev Pay the 90% balance (called after batch becomes Active)
+     * @dev Pay the balance payment (called after batch becomes Active, uses USDC)
      */
-    function payBalance(uint256 batchId) external payable nonReentrant {
+    function payBalance(uint256 batchId) external nonReentrant whenNotPaused {
         Batch storage batch = batches[batchId];
         require(batch.state == BatchState.Active, "Batch not active");
 
@@ -140,19 +151,15 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
         require(!participant.balancePaid, "Balance already paid");
         require(block.timestamp <= participant.paymentDeadline, "Payment window expired");
 
-        uint256 balanceAmount = (fullPrice * BALANCE_PERCENTAGE) / 100;
-        require(msg.value >= balanceAmount, "Insufficient balance payment");
+        uint256 balanceAmount = (fullPrice * balancePercentage) / 100;
+
+        // Transfer USDC from user to contract
+        usdcToken.safeTransferFrom(msg.sender, address(this), balanceAmount);
 
         participant.balanceAmount = balanceAmount;
         participant.balancePaid = true;
 
         emit BalancePaymentReceived(batchId, msg.sender, balanceAmount);
-
-        // Refund excess payment
-        if (msg.value > balanceAmount) {
-            (bool success, ) = payable(msg.sender).call{value: msg.value - balanceAmount}("");
-            require(success, "Refund failed");
-        }
     }
 
     /**
@@ -268,13 +275,70 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @dev Withdraw collected funds (admin only)
+     * @dev Withdraw collected USDC funds (admin only)
      */
     function withdrawFunds(uint256 amount) external onlyOwner nonReentrant {
-        require(amount <= address(this).balance, "Insufficient contract balance");
-        (bool success, ) = payable(owner()).call{value: amount}("");
-        require(success, "Withdrawal failed");
+        uint256 contractBalance = usdcToken.balanceOf(address(this));
+        require(amount <= contractBalance, "Insufficient contract balance");
+        usdcToken.safeTransfer(owner(), amount);
         emit FundsWithdrawn(owner(), amount);
+    }
+
+    /**
+     * @dev Remove participant and refund their payments in USDC (admin only)
+     * Can be called at any time before batch is Completed
+     */
+    function removeParticipant(uint256 batchId, address user) external onlyOwner nonReentrant {
+        Batch storage batch = batches[batchId];
+        require(batch.state != BatchState.Completed && batch.state != BatchState.Purged, "Cannot remove from completed/purged batch");
+
+        uint256 index = batch.participantIndex[user];
+        require(index > 0, "Not a participant in this batch");
+
+        Participant storage participant = batch.participants[index];
+
+        // Calculate refund amount (deposit + balance if paid)
+        uint256 refundAmount = participant.depositAmount;
+        if (participant.balancePaid) {
+            refundAmount += participant.balanceAmount;
+        }
+
+        // Remove participant mapping
+        batch.participantIndex[user] = 0;
+
+        // Note: We don't decrement participantCount or reorganize the array
+        // to maintain historical indices. The slot is marked as removed by
+        // setting the wallet address to zero.
+        participant.wallet = address(0);
+
+        emit ParticipantRemoved(batchId, user, refundAmount);
+
+        // Refund the participant in USDC
+        if (refundAmount > 0) {
+            usdcToken.safeTransfer(user, refundAmount);
+        }
+    }
+
+    /**
+     * @dev Update deposit percentage (admin only)
+     */
+    function setDepositPercentage(uint256 newPercentage) external onlyOwner {
+        require(newPercentage > 0 && newPercentage < 100, "Invalid percentage");
+        require(newPercentage + balancePercentage == 100, "Percentages must sum to 100");
+        uint256 oldPercentage = depositPercentage;
+        depositPercentage = newPercentage;
+        emit DepositPercentageChanged(oldPercentage, newPercentage);
+    }
+
+    /**
+     * @dev Update balance percentage (admin only)
+     */
+    function setBalancePercentage(uint256 newPercentage) external onlyOwner {
+        require(newPercentage > 0 && newPercentage < 100, "Invalid percentage");
+        require(depositPercentage + newPercentage == 100, "Percentages must sum to 100");
+        uint256 oldPercentage = balancePercentage;
+        balancePercentage = newPercentage;
+        emit BalancePercentageChanged(oldPercentage, newPercentage);
     }
 
     /**
@@ -372,5 +436,19 @@ contract BatchStateMachine is Ownable, ReentrancyGuard {
         if (batch.participantCount == newSize) {
             _transitionBatchState(batchId, BatchState.Staged);
         }
+    }
+
+    /**
+     * @dev Emergency pause - stops joinBatch and payBalance
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /**
+     * @dev Unpause contract
+     */
+    function unpause() external onlyOwner {
+        _unpause();
     }
 }

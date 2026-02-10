@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getBatchInfo, getCurrentBatchId, transitionBatchState, BatchState, withdrawFunds, getContract } from "@/lib/contract";
+import { getBatchInfo, getCurrentBatchId, transitionBatchState, BatchState, withdrawFunds, getContract, getBatchParticipants, removeParticipant, getDepositPercentage, getBalancePercentage, setDepositPercentage, setBalancePercentage, getFullPrice, updateFullPrice } from "@/lib/contract";
 import { useAccount, useWalletClient } from "wagmi";
 import { ethers } from "ethers";
 import {
@@ -14,6 +14,8 @@ import {
   DollarSign,
   Wallet,
   AlertTriangle,
+  UserX,
+  Settings,
 } from "lucide-react";
 
 interface Batch {
@@ -37,6 +39,17 @@ export function BatchManagement() {
   const [contractBalance, setContractBalance] = useState<string>("0");
   const [withdrawAmount, setWithdrawAmount] = useState<string>("");
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [showParticipantsModal, setShowParticipantsModal] = useState(false);
+  const [participantsBatchId, setParticipantsBatchId] = useState<number | null>(null);
+  const [participants, setParticipants] = useState<string[]>([]);
+  const [loadingParticipants, setLoadingParticipants] = useState(false);
+  const [showPaymentConfigModal, setShowPaymentConfigModal] = useState(false);
+  const [depositPercentage, setDepositPercentageState] = useState<number>(10);
+  const [balancePercentage, setBalancePercentageState] = useState<number>(90);
+  const [newDepositPercentage, setNewDepositPercentage] = useState<string>("10");
+  const [newBalancePercentage, setNewBalancePercentage] = useState<string>("90");
+  const [fullPrice, setFullPrice] = useState<string>("0.1");
+  const [newFullPrice, setNewFullPrice] = useState<string>("0.1");
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
 
@@ -45,6 +58,7 @@ export function BatchManagement() {
   useEffect(() => {
     loadBatches();
     loadContractBalance();
+    loadPaymentPercentages();
   }, []);
 
   const loadBatches = async () => {
@@ -166,6 +180,160 @@ export function BatchManagement() {
     } catch (error: any) {
       console.error("Error withdrawing funds:", error);
       alert(`Failed to withdraw funds: ${error.message || "Unknown error"}`);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const loadPaymentPercentages = async () => {
+    try {
+      const deposit = await getDepositPercentage();
+      const balance = await getBalancePercentage();
+      const price = await getFullPrice();
+      const priceInEth = ethers.formatEther(price);
+
+      setDepositPercentageState(deposit);
+      setBalancePercentageState(balance);
+      setNewDepositPercentage(deposit.toString());
+      setNewBalancePercentage(balance.toString());
+      setFullPrice(priceInEth);
+      setNewFullPrice(priceInEth);
+    } catch (error) {
+      console.error("Error loading payment percentages:", error);
+    }
+  };
+
+  const loadParticipants = async (batchId: number) => {
+    try {
+      setLoadingParticipants(true);
+      const addresses = await getBatchParticipants(batchId);
+      setParticipants(addresses);
+    } catch (error) {
+      console.error("Error loading participants:", error);
+      alert("Failed to load participants");
+    } finally {
+      setLoadingParticipants(false);
+    }
+  };
+
+  const handleViewParticipants = async (batchId: number) => {
+    setParticipantsBatchId(batchId);
+    setShowParticipantsModal(true);
+    await loadParticipants(batchId);
+  };
+
+  const handleRemoveParticipant = async (participantAddress: string) => {
+    if (!walletClient || !address || !participantsBatchId) {
+      alert("Please connect your wallet first");
+      return;
+    }
+
+    if (!confirm(
+      `⚠️ WARNING: Remove participant ${participantAddress.substring(0, 10)}...?\n\n` +
+      `This will refund their deposit and balance (if paid) and remove them from the batch.\n\n` +
+      `Are you sure?`
+    )) {
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const provider = new ethers.BrowserProvider(walletClient as any);
+      const signer = await provider.getSigner();
+
+      console.log("Removing participant", participantAddress, "from batch", participantsBatchId);
+
+      const receipt = await removeParticipant(participantsBatchId, participantAddress, signer);
+      console.log("Transaction receipt:", receipt);
+
+      // Reload participants and batches
+      await loadParticipants(participantsBatchId);
+      await loadBatches();
+
+      alert("Participant removed and refunded successfully!");
+    } catch (error: any) {
+      console.error("Error removing participant:", error);
+      alert(`Failed to remove participant: ${error.message || "Unknown error"}`);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleUpdatePaymentPercentages = async () => {
+    if (!walletClient || !address) {
+      alert("Please connect your wallet first");
+      return;
+    }
+
+    const newDeposit = parseInt(newDepositPercentage);
+    const newBalance = parseInt(newBalancePercentage);
+    const newPriceFloat = parseFloat(newFullPrice);
+
+    if (isNaN(newDeposit) || isNaN(newBalance)) {
+      alert("Please enter valid percentages");
+      return;
+    }
+
+    if (isNaN(newPriceFloat) || newPriceFloat <= 0) {
+      alert("Please enter a valid price");
+      return;
+    }
+
+    if (newDeposit + newBalance !== 100) {
+      alert("Percentages must sum to 100%");
+      return;
+    }
+
+    if (newDeposit <= 0 || newDeposit >= 100) {
+      alert("Deposit percentage must be between 1 and 99");
+      return;
+    }
+
+    const priceChanged = newFullPrice !== fullPrice;
+    const percentagesChanged = newDeposit !== depositPercentage || newBalance !== balancePercentage;
+
+    if (!priceChanged && !percentagesChanged) {
+      alert("No changes to apply");
+      return;
+    }
+
+    let confirmMsg = "Update payment configuration?\n\n";
+    if (priceChanged) {
+      confirmMsg += `Full Price: ${fullPrice} ETH → ${newFullPrice} ETH\n`;
+    }
+    if (percentagesChanged) {
+      confirmMsg += `Split: ${depositPercentage}% / ${balancePercentage}% → ${newDeposit}% / ${newBalance}%\n`;
+    }
+    confirmMsg += `\nThis will affect all NEW participants only.`;
+
+    if (!confirm(confirmMsg)) {
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const provider = new ethers.BrowserProvider(walletClient as any);
+      const signer = await provider.getSigner();
+
+      // Update full price if changed
+      if (priceChanged) {
+        const priceInWei = ethers.parseEther(newFullPrice);
+        await updateFullPrice(priceInWei, signer);
+      }
+
+      // Update deposit percentage if changed
+      if (percentagesChanged) {
+        await setDepositPercentage(newDeposit, signer);
+      }
+
+      // Reload percentages
+      await loadPaymentPercentages();
+
+      alert("Payment configuration updated successfully!");
+      setShowPaymentConfigModal(false);
+    } catch (error: any) {
+      console.error("Error updating configuration:", error);
+      alert(`Failed to update configuration: ${error.message || "Unknown error"}`);
     } finally {
       setProcessing(false);
     }
@@ -440,6 +608,14 @@ export function BatchManagement() {
                       View Details
                     </button>
 
+                    <button
+                      onClick={() => handleViewParticipants(batch.id)}
+                      className="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg font-medium transition-colors text-sm flex items-center gap-1"
+                    >
+                      <Users className="w-4 h-4" />
+                      Participants
+                    </button>
+
                     {nextState && (
                       <button
                         onClick={() => handleProgressState(batch.id)}
@@ -483,6 +659,46 @@ export function BatchManagement() {
               </div>
             );
           })}
+        </div>
+      </div>
+
+      {/* Payment Configuration Section */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg shadow p-6">
+        <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              <Settings className="w-6 h-6 text-blue-600" />
+              <h3 className="text-lg font-bold text-gray-900">Payment Configuration</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Configure full price and deposit/balance payment split. Changes affect NEW participants only.
+            </p>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-gray-700">Full Price:</span>
+                <span className="font-bold text-blue-600">{fullPrice} ETH</span>
+              </div>
+              <div className="flex items-center gap-4">
+                <div>
+                  <span className="text-gray-700">Deposit:</span>
+                  <span className="font-bold text-blue-600 ml-2">{depositPercentage}%</span>
+                  <span className="text-gray-500 ml-1">({(parseFloat(fullPrice) * depositPercentage / 100).toFixed(4)} ETH)</span>
+                </div>
+                <div>
+                  <span className="text-gray-700">Balance:</span>
+                  <span className="font-bold text-blue-600 ml-2">{balancePercentage}%</span>
+                  <span className="text-gray-500 ml-1">({(parseFloat(fullPrice) * balancePercentage / 100).toFixed(4)} ETH)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowPaymentConfigModal(true)}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap"
+          >
+            <Settings className="w-5 h-5" />
+            Configure Split
+          </button>
         </div>
       </div>
 
@@ -684,6 +900,226 @@ export function BatchManagement() {
                   className="flex-1 px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {processing ? "Processing..." : "Withdraw"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Participants Modal */}
+      {showParticipantsModal && participantsBatchId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-gray-900">
+                Batch #{participantsBatchId} Participants
+              </h2>
+              <button
+                onClick={() => {
+                  setShowParticipantsModal(false);
+                  setParticipants([]);
+                }}
+                className="text-gray-400 hover:text-gray-600"
+                disabled={processing}
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-6">
+              {loadingParticipants ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                  <p className="mt-4 text-gray-600">Loading participants...</p>
+                </div>
+              ) : participants.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No participants in this batch
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {participants.map((participant, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                    >
+                      <div className="flex-1 font-mono text-sm">
+                        {participant === "0x0000000000000000000000000000000000000000" ? (
+                          <span className="text-gray-400 line-through">{participant} (Removed)</span>
+                        ) : (
+                          participant
+                        )}
+                      </div>
+                      {participant !== "0x0000000000000000000000000000000000000000" && (
+                        <button
+                          onClick={() => handleRemoveParticipant(participant)}
+                          disabled={processing}
+                          className="ml-4 px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-medium transition-colors text-sm flex items-center gap-2 disabled:opacity-50"
+                        >
+                          <UserX className="w-4 h-4" />
+                          Remove & Refund
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex justify-end pt-4 mt-4 border-t">
+                <button
+                  onClick={() => {
+                    setShowParticipantsModal(false);
+                    setParticipants([]);
+                  }}
+                  className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors"
+                  disabled={processing}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Configuration Modal */}
+      {showPaymentConfigModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-gray-900">Configure Payment Split</h2>
+              <button
+                onClick={() => {
+                  setShowPaymentConfigModal(false);
+                  setNewDepositPercentage(depositPercentage.toString());
+                  setNewBalancePercentage(balancePercentage.toString());
+                  setNewFullPrice(fullPrice);
+                }}
+                className="text-gray-400 hover:text-gray-600"
+                disabled={processing}
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Current Configuration */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm font-medium text-blue-900 mb-2">Current Configuration</p>
+                <div className="space-y-1 text-sm text-blue-700">
+                  <div>Full Price: {fullPrice} ETH</div>
+                  <div>Split: {depositPercentage}% deposit / {balancePercentage}% balance</div>
+                </div>
+              </div>
+
+              {/* Warning */}
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <div className="flex gap-3">
+                  <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-yellow-900 mb-1">⚠️ Important</p>
+                    <p className="text-xs text-yellow-700">
+                      Changes only affect NEW participants. Existing participants keep their original configuration.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Full Price Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Full Price (ETH)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.001"
+                    min="0.001"
+                    value={newFullPrice}
+                    onChange={(e) => setNewFullPrice(e.target.value)}
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    disabled={processing}
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500">ETH</span>
+                </div>
+              </div>
+
+              {/* Deposit Percentage Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Deposit Percentage
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="1"
+                    max="99"
+                    value={newDepositPercentage}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value) || 0;
+                      setNewDepositPercentage(e.target.value);
+                      setNewBalancePercentage((100 - val).toString());
+                    }}
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    disabled={processing}
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500">%</span>
+                </div>
+              </div>
+
+              {/* Balance Percentage (Auto-calculated) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Balance Percentage (auto-calculated)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={newBalancePercentage}
+                    readOnly
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg bg-gray-100 text-gray-700"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500">%</span>
+                </div>
+              </div>
+
+              {/* Validation */}
+              {parseInt(newDepositPercentage) + parseInt(newBalancePercentage) !== 100 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                  Percentages must sum to 100%
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => {
+                    setShowPaymentConfigModal(false);
+                    setNewDepositPercentage(depositPercentage.toString());
+                    setNewBalancePercentage(balancePercentage.toString());
+                    setNewFullPrice(fullPrice);
+                  }}
+                  className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                  disabled={processing}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleUpdatePaymentPercentages}
+                  disabled={
+                    processing ||
+                    parseInt(newDepositPercentage) + parseInt(newBalancePercentage) !== 100 ||
+                    parseInt(newDepositPercentage) <= 0 ||
+                    parseInt(newDepositPercentage) >= 100
+                  }
+                  className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {processing ? "Processing..." : "Update Split"}
                 </button>
               </div>
             </div>
