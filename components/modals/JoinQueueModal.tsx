@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { X, Wallet } from "lucide-react";
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { ethers } from "ethers";
-import { joinBatch, getFullPrice, approveUsdcSpending, getUsdcAllowance, getDepositPercentage, getBalancePercentage } from "@/lib/contract";
+import { joinBatch, getDepositPrice, approveUsdcSpending, getUsdcAllowance } from "@/lib/contract";
 
 interface JoinQueueModalProps {
   isOpen: boolean;
@@ -26,64 +26,56 @@ export function JoinQueueModal({
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsApproval, setNeedsApproval] = useState(true);
-  const [pricing, setPricing] = useState<{ deposit: number; total: number; depositPercent: number; balancePercent: number } | null>(null);
+  const [depositAmount, setDepositAmount] = useState<number | null>(null);
 
   const { primaryWallet } = useDynamicContext();
 
-  // Fetch pricing from smart contract
+  // Fetch deposit price from smart contract
   useEffect(() => {
-    const fetchPricing = async () => {
+    const fetchDepositPrice = async () => {
       try {
-        const fullPrice = await getFullPrice();
-        const depositPercent = await getDepositPercentage();
-        const balancePercent = await getBalancePercentage();
-
+        const depositPrice = await getDepositPrice();
         // USDC has 6 decimals
-        const fullPriceInUsdc = Number(fullPrice) / 1e6;
-        setPricing({
-          deposit: fullPriceInUsdc * (depositPercent / 100),
-          total: fullPriceInUsdc,
-          depositPercent,
-          balancePercent,
-        });
+        const depositInUsdc = Number(depositPrice) / 1e6;
+        setDepositAmount(depositInUsdc);
       } catch (err) {
-        console.error("Failed to fetch pricing:", err);
-        // Fallback to default values
-        setPricing({ deposit: 10, total: 100, depositPercent: 10, balancePercent: 90 });
+        console.error("Failed to fetch deposit price:", err);
+        // Fallback to default value
+        setDepositAmount(25);
       }
     };
 
     if (isOpen) {
-      fetchPricing();
+      fetchDepositPrice();
     }
   }, [isOpen]);
 
   // Check if USDC approval is needed
   useEffect(() => {
     const checkApproval = async () => {
-      if (!primaryWallet || !pricing) return;
+      if (!primaryWallet || !depositAmount) return;
 
       try {
         const address = primaryWallet.address;
         const allowance = await getUsdcAllowance(address);
-        const depositAmount = BigInt(Math.floor(pricing.deposit * 1e6));
+        const depositAmountWei = BigInt(Math.floor(depositAmount * 1e6));
 
-        setNeedsApproval(allowance < depositAmount);
+        setNeedsApproval(allowance < depositAmountWei);
       } catch (err) {
         console.error("Failed to check USDC allowance:", err);
       }
     };
 
-    if (isOpen && primaryWallet && pricing) {
+    if (isOpen && primaryWallet && depositAmount) {
       checkApproval();
     }
-  }, [isOpen, primaryWallet, pricing]);
+  }, [isOpen, primaryWallet, depositAmount]);
 
   const handleApprove = async () => {
     setProcessing(true);
     setError(null);
     try {
-      if (!primaryWallet || !pricing) {
+      if (!primaryWallet || !depositAmount) {
         throw new Error("Wallet not connected or pricing not loaded");
       }
 
@@ -92,7 +84,7 @@ export function JoinQueueModal({
         throw new Error("Wallet connector not available");
       }
 
-      const provider = await walletConnector.getWalletClient();
+      const provider = (walletConnector as any).getWalletClient();
       if (!provider) {
         throw new Error("Provider not available");
       }
@@ -100,10 +92,11 @@ export function JoinQueueModal({
       const ethersProvider = new ethers.BrowserProvider(provider as any);
       const signer = await ethersProvider.getSigner();
 
-      // Approve a large amount for convenience (or just the deposit amount)
-      const approvalAmount = BigInt(Math.floor(pricing.total * 1e6)); // Approve full price
+      // Approve a large amount for convenience (deposit + expected balance)
+      // Balance price will be set when batch moves to Active, so we approve generously
+      const approvalAmount = BigInt(Math.floor(depositAmount * 10 * 1e6)); // Approve 10x deposit for balance payment
 
-      console.log("Approving USDC spending:", pricing.total, "USDC");
+      console.log("Approving USDC spending:", depositAmount * 10, "USDC");
       const receipt = await approveUsdcSpending(approvalAmount, signer);
       console.log("Approval successful:", receipt.transactionHash);
 
@@ -131,7 +124,7 @@ export function JoinQueueModal({
         throw new Error("Wallet connector not available");
       }
 
-      const provider = await walletConnector.getWalletClient();
+      const provider = (walletConnector as any).getWalletClient();
       if (!provider) {
         throw new Error("Provider not available");
       }
@@ -139,7 +132,7 @@ export function JoinQueueModal({
       const ethersProvider = new ethers.BrowserProvider(provider as any);
       const signer = await ethersProvider.getSigner();
 
-      console.log("Joining batch with USDC deposit:", pricing?.deposit, "USDC");
+      console.log("Joining batch with USDC deposit:", depositAmount, "USDC");
 
       const receipt = await joinBatch(signer);
       console.log("Transaction successful:", receipt.transactionHash);
@@ -194,22 +187,18 @@ export function JoinQueueModal({
           {/* Pricing Breakdown */}
           <div className="space-y-3">
             <h3 className="font-semibold text-gray-900">Pricing (USDC)</h3>
-            {pricing ? (
+            {depositAmount ? (
               <div className="bg-gray-50 rounded-lg p-4 space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Total Cost</span>
-                  <span className="font-medium">{pricing.total.toFixed(2)} USDC</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Deposit (Now - {pricing.depositPercent}%)</span>
+                  <span className="text-gray-600">Deposit (Now)</span>
                   <span className="font-bold text-blue-600">
-                    {pricing.deposit.toFixed(2)} USDC
+                    {depositAmount.toFixed(2)} USDC
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Balance (Later - {pricing.balancePercent}%)</span>
-                  <span className="font-medium">
-                    {(pricing.total - pricing.deposit).toFixed(2)} USDC
+                  <span className="text-gray-600">Balance (Later)</span>
+                  <span className="font-medium text-gray-500">
+                    TBD (set when batch activates)
                   </span>
                 </div>
               </div>
@@ -219,8 +208,7 @@ export function JoinQueueModal({
               </div>
             )}
             <p className="text-xs text-gray-500">
-              Pay {pricing?.depositPercent}% deposit now to join. You&apos;ll pay the remaining {pricing?.balancePercent}% when the
-              batch becomes active (within 7 days).
+              Pay deposit now to join. Balance price will be set by admin after batch fills (based on lab sequencing costs).
             </p>
           </div>
 
@@ -242,7 +230,7 @@ export function JoinQueueModal({
                 </div>
                 <button
                   onClick={handleApprove}
-                  disabled={processing || !pricing}
+                  disabled={processing || !depositAmount}
                   className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   <Wallet className="w-5 h-5" />
@@ -258,14 +246,14 @@ export function JoinQueueModal({
                 </div>
                 <button
                   onClick={handleJoin}
-                  disabled={processing || !pricing}
+                  disabled={processing || !depositAmount}
                   className="w-full px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   <Wallet className="w-5 h-5" />
                   {processing
                     ? "Joining..."
-                    : pricing
-                      ? `Join with ${pricing.deposit.toFixed(2)} USDC`
+                    : depositAmount
+                      ? `Join with ${depositAmount.toFixed(2)} USDC`
                       : "Loading..."}
                 </button>
               </>

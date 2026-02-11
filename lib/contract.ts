@@ -13,39 +13,38 @@ const BATCH_STATE_MACHINE_ABI = [
   "function slashUser(uint256 batchId, address user) external",
   "function canStillPay(uint256 batchId, address user) external view returns (bool)",
   "function allParticipantsPaid(uint256 batchId) external view returns (bool)",
-  "function getBatchInfo(uint256 batchId) external view returns (uint8 state, uint256 participantCount, uint256 activeParticipantCount, uint256 maxBatchSize, uint256 createdAt, uint256 stateChangedAt)",
+  "function getBatchInfo(uint256 batchId) external view returns (uint8 state, uint256 participantCount, uint256 activeParticipantCount, uint256 unpaidActiveParticipants, uint256 maxBatchSize, uint256 createdAt, uint256 stateChangedAt)",
   "function getParticipantInfo(uint256 batchId, address user) external view returns (bytes32 commitmentHash, uint256 depositAmount, uint256 balanceAmount, bool balancePaid, bool slashed, uint256 joinedAt, uint256 paymentDeadline)",
   "function isParticipant(uint256 batchId, address user) external view returns (bool)",
   "function getParticipantAddress(uint256 batchId, uint256 index) external view returns (address)",
   "function currentBatchId() external view returns (uint256)",
-  "function fullPrice() external view returns (uint256)",
+  "function depositPrice() external view returns (uint256)",
+  "function batchBalancePrice(uint256 batchId) external view returns (uint256)",
   "function defaultBatchSize() external view returns (uint256)",
   "function setDefaultBatchSize(uint256 newSize) external",
   "function setBatchSize(uint256 batchId, uint256 newSize) external",
-  "function transitionBatchState(uint256 batchId, uint8 newState) external",
-  "function updateFullPrice(uint256 newPrice) external",
+  "function transitionBatchState(uint256 batchId, uint8 newState, uint256 balancePrice) external",
+  "function setDepositPrice(uint256 newPrice) external",
+  "function setBatchBalancePrice(uint256 batchId, uint256 balancePrice) external",
   "function withdrawFunds(uint256 amount) external",
   "function withdrawSlashedFunds() external",
   "function slashedFunds() external view returns (uint256)",
   "function removeParticipant(uint256 batchId, address user) external",
-  "function setDepositPercentage(uint256 newPercentage) external",
-  "function setBalancePercentage(uint256 newPercentage) external",
-  "function setPaymentPercentages(uint256 newDepositPercentage, uint256 newBalancePercentage) external",
-  "function depositPercentage() external view returns (uint256)",
-  "function balancePercentage() external view returns (uint256)",
   "function owner() external view returns (address)",
   "event BatchCreated(uint256 indexed batchId, uint256 maxBatchSize, uint256 timestamp)",
   "event UserJoined(uint256 indexed batchId, address indexed user, uint256 depositAmount)",
   "event BalancePaymentReceived(uint256 indexed batchId, address indexed user, uint256 amount)",
-  "event UserSlashed(uint256 indexed batchId, address indexed user, uint256 penaltyAmount)",
+  "event BalanceManuallyMarked(uint256 indexed batchId, address indexed user, uint256 amount, bool wasSlashed, bool afterDeadline)",
+  "event UserSlashed(uint256 indexed batchId, address indexed user, uint256 penaltyAmount, uint256 remainingDeposit)",
   "event BatchStateChanged(uint256 indexed batchId, uint8 newState, uint256 timestamp)",
   "event CommitmentHashStored(uint256 indexed batchId, address indexed user, bytes32 commitmentHash)",
   "event FundsWithdrawn(address indexed admin, uint256 amount)",
+  "event SlashedFundsWithdrawn(address indexed admin, uint256 amount)",
   "event DefaultBatchSizeChanged(uint256 oldSize, uint256 newSize, uint256 timestamp)",
   "event BatchSizeChanged(uint256 indexed batchId, uint256 oldSize, uint256 newSize, uint256 timestamp)",
-  "event ParticipantRemoved(uint256 indexed batchId, address indexed user, uint256 refundAmount)",
-  "event DepositPercentageChanged(uint256 oldPercentage, uint256 newPercentage)",
-  "event BalancePercentageChanged(uint256 oldPercentage, uint256 newPercentage)",
+  "event ParticipantRemoved(uint256 indexed batchId, address indexed user, uint256 refundAmount, bool balancePaid, bool slashed)",
+  "event DepositPriceChanged(uint256 oldPrice, uint256 newPrice)",
+  "event BalancePriceSet(uint256 indexed batchId, uint256 balancePrice)",
 ];
 
 export enum BatchState {
@@ -70,6 +69,7 @@ export interface BatchInfo {
   state: BatchState;
   participantCount: number;
   activeParticipantCount: number;
+  unpaidActiveParticipants: number;
   maxBatchSize: number;
   createdAt: number;
   stateChangedAt: number;
@@ -170,47 +170,32 @@ export async function getCurrentBatchId(): Promise<number> {
  */
 export async function getBatchInfo(batchId: number): Promise<BatchInfo> {
   const contract = getContract();
-
-  try {
-    // Current contract version with activeParticipantCount
-    const info = await contract.getBatchInfo(batchId);
-    return {
-      state: Number(info[0]) as BatchState,
-      participantCount: Number(info[1]),
-      activeParticipantCount: Number(info[2]),
-      maxBatchSize: Number(info[3]),
-      createdAt: Number(info[4]),
-      stateChangedAt: Number(info[5]),
-    };
-  } catch (error: any) {
-    // Fallback for old contract version without activeParticipantCount
-    if (error.code === 'BAD_DATA') {
-      const oldABI = ["function getBatchInfo(uint256 batchId) external view returns (uint8 state, uint256 participantCount, uint256 maxBatchSize, uint256 createdAt, uint256 stateChangedAt)"];
-      const oldContract = new ethers.Contract(
-        process.env.NEXT_PUBLIC_CONTRACT_ADDRESS!,
-        oldABI,
-        getProvider()
-      );
-      const info = await oldContract.getBatchInfo(batchId);
-      return {
-        state: Number(info[0]) as BatchState,
-        participantCount: Number(info[1]),
-        activeParticipantCount: Number(info[1]), // Same as participantCount in old version
-        maxBatchSize: Number(info[2]),
-        createdAt: Number(info[3]),
-        stateChangedAt: Number(info[4]),
-      };
-    }
-    throw error;
-  }
+  const info = await contract.getBatchInfo(batchId);
+  return {
+    state: Number(info[0]) as BatchState,
+    participantCount: Number(info[1]),
+    activeParticipantCount: Number(info[2]),
+    unpaidActiveParticipants: Number(info[3]),
+    maxBatchSize: Number(info[4]),
+    createdAt: Number(info[5]),
+    stateChangedAt: Number(info[6]),
+  };
 }
 
 /**
- * Get full price from contract
+ * Get deposit price from contract
  */
-export async function getFullPrice(): Promise<bigint> {
+export async function getDepositPrice(): Promise<bigint> {
   const contract = getContract();
-  return await contract.fullPrice();
+  return await contract.depositPrice();
+}
+
+/**
+ * Get balance price for a specific batch
+ */
+export async function getBatchBalancePrice(batchId: number): Promise<bigint> {
+  const contract = getContract();
+  return await contract.batchBalancePrice(batchId);
 }
 
 /**
@@ -347,23 +332,38 @@ export async function storeCommitmentHash(
 
 /**
  * Transition batch state (owner only)
+ * When transitioning from Staged to Active, balancePrice must be provided
  */
 export async function transitionBatchState(
   batchId: number,
   newState: BatchState,
-  signer: ethers.Signer
+  signer: ethers.Signer,
+  balancePrice: bigint = 0n
 ) {
   const contract = getContractWithSigner(signer);
-  const tx = await contract.transitionBatchState(batchId, newState);
+  const tx = await contract.transitionBatchState(batchId, newState, balancePrice);
   return await tx.wait();
 }
 
 /**
- * Update full price (owner only)
+ * Set deposit price (owner only)
  */
-export async function updateFullPrice(newPrice: bigint, signer: ethers.Signer) {
+export async function setDepositPrice(newPrice: bigint, signer: ethers.Signer) {
   const contract = getContractWithSigner(signer);
-  const tx = await contract.updateFullPrice(newPrice);
+  const tx = await contract.setDepositPrice(newPrice);
+  return await tx.wait();
+}
+
+/**
+ * Set balance price for a specific batch (owner only)
+ */
+export async function setBatchBalancePrice(
+  batchId: number,
+  balancePrice: bigint,
+  signer: ethers.Signer
+) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.setBatchBalancePrice(batchId, balancePrice);
   return await tx.wait();
 }
 
@@ -433,61 +433,6 @@ export async function removeParticipant(
   return await tx.wait();
 }
 
-/**
- * Get deposit percentage
- */
-export async function getDepositPercentage(): Promise<number> {
-  const contract = getContract();
-  const percentage = await contract.depositPercentage();
-  return Number(percentage);
-}
-
-/**
- * Get balance percentage
- */
-export async function getBalancePercentage(): Promise<number> {
-  const contract = getContract();
-  const percentage = await contract.balancePercentage();
-  return Number(percentage);
-}
-
-/**
- * Set deposit percentage (admin only)
- */
-export async function setDepositPercentage(
-  newPercentage: number,
-  signer: ethers.Signer
-) {
-  const contract = getContractWithSigner(signer);
-  const tx = await contract.setDepositPercentage(newPercentage);
-  return await tx.wait();
-}
-
-/**
- * Set balance percentage (admin only)
- */
-export async function setBalancePercentage(
-  newPercentage: number,
-  signer: ethers.Signer
-) {
-  const contract = getContractWithSigner(signer);
-  const tx = await contract.setBalancePercentage(newPercentage);
-  return await tx.wait();
-}
-
-/**
- * Set both deposit and balance percentages atomically (admin only)
- * Recommended method to avoid invariant violations during percentage updates
- */
-export async function setPaymentPercentages(
-  depositPercentage: number,
-  balancePercentage: number,
-  signer: ethers.Signer
-) {
-  const contract = getContractWithSigner(signer);
-  const tx = await contract.setPaymentPercentages(depositPercentage, balancePercentage);
-  return await tx.wait();
-}
 
 // ERC20 ABI for USDC interactions
 const ERC20_ABI = [

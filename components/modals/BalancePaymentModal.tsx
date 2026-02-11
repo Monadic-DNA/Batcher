@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { X, Wallet, Clock, AlertTriangle } from "lucide-react";
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { ethers } from "ethers";
-import { payBalance, getFullPrice, approveUsdcSpending, getUsdcAllowance, getBalancePercentage } from "@/lib/contract";
+import { payBalance, getBatchBalancePrice, approveUsdcSpending, getUsdcAllowance } from "@/lib/contract";
 
 interface BalancePaymentModalProps {
   isOpen: boolean;
@@ -26,56 +26,49 @@ export function BalancePaymentModal({
   const [needsApproval, setNeedsApproval] = useState(true);
   const [timeRemaining, setTimeRemaining] = useState<string>("");
   const [isUrgent, setIsUrgent] = useState(false);
-  const [pricing, setPricing] = useState<{ balance: number; total: number; balancePercent: number } | null>(null);
+  const [balanceAmount, setBalanceAmount] = useState<number | null>(null);
 
   const { primaryWallet } = useDynamicContext();
 
-  // Fetch pricing from smart contract
+  // Fetch balance price from smart contract for this specific batch
   useEffect(() => {
-    const fetchPricing = async () => {
+    const fetchBalancePrice = async () => {
       try {
-        const fullPrice = await getFullPrice();
-        const balancePercent = await getBalancePercentage();
-
+        const balancePrice = await getBatchBalancePrice(batchId);
         // USDC has 6 decimals
-        const fullPriceInUsdc = Number(fullPrice) / 1e6;
-        setPricing({
-          total: fullPriceInUsdc,
-          balance: fullPriceInUsdc * (balancePercent / 100),
-          balancePercent,
-        });
+        const balanceInUsdc = Number(balancePrice) / 1e6;
+        setBalanceAmount(balanceInUsdc);
       } catch (err) {
-        console.error("Failed to fetch pricing:", err);
-        // Fallback to default values
-        setPricing({ total: 100, balance: 90, balancePercent: 90 });
+        console.error("Failed to fetch balance price:", err);
+        setError("Unable to load balance price. It may not be set yet.");
       }
     };
 
     if (isOpen) {
-      fetchPricing();
+      fetchBalancePrice();
     }
-  }, [isOpen]);
+  }, [isOpen, batchId]);
 
   // Check if USDC approval is needed
   useEffect(() => {
     const checkApproval = async () => {
-      if (!primaryWallet || !pricing) return;
+      if (!primaryWallet || !balanceAmount) return;
 
       try {
         const address = primaryWallet.address;
         const allowance = await getUsdcAllowance(address);
-        const balanceAmount = BigInt(Math.floor(pricing.balance * 1e6));
+        const balanceAmountWei = BigInt(Math.floor(balanceAmount * 1e6));
 
-        setNeedsApproval(allowance < balanceAmount);
+        setNeedsApproval(allowance < balanceAmountWei);
       } catch (err) {
         console.error("Failed to check USDC allowance:", err);
       }
     };
 
-    if (isOpen && primaryWallet && pricing) {
+    if (isOpen && primaryWallet && balanceAmount) {
       checkApproval();
     }
-  }, [isOpen, primaryWallet, pricing]);
+  }, [isOpen, primaryWallet, balanceAmount]);
 
   // Countdown timer
   useEffect(() => {
@@ -110,7 +103,7 @@ export function BalancePaymentModal({
     setProcessing(true);
     setError(null);
     try {
-      if (!primaryWallet || !pricing) {
+      if (!primaryWallet || !balanceAmount) {
         throw new Error("Wallet not connected or pricing not loaded");
       }
 
@@ -119,7 +112,7 @@ export function BalancePaymentModal({
         throw new Error("Wallet connector not available");
       }
 
-      const provider = await walletConnector.getWalletClient();
+      const provider = (walletConnector as any).getWalletClient();
       if (!provider) {
         throw new Error("Provider not available");
       }
@@ -127,9 +120,9 @@ export function BalancePaymentModal({
       const ethersProvider = new ethers.BrowserProvider(provider as any);
       const signer = await ethersProvider.getSigner();
 
-      const approvalAmount = BigInt(Math.floor(pricing.balance * 1e6));
+      const approvalAmount = BigInt(Math.floor(balanceAmount * 1e6));
 
-      console.log("Approving USDC spending:", pricing.balance, "USDC");
+      console.log("Approving USDC spending:", balanceAmount, "USDC");
       const receipt = await approveUsdcSpending(approvalAmount, signer);
       console.log("Approval successful:", receipt.transactionHash);
 
@@ -157,7 +150,7 @@ export function BalancePaymentModal({
         throw new Error("Wallet connector not available");
       }
 
-      const provider = await walletConnector.getWalletClient();
+      const provider = (walletConnector as any).getWalletClient();
       if (!provider) {
         throw new Error("Provider not available");
       }
@@ -165,7 +158,7 @@ export function BalancePaymentModal({
       const ethersProvider = new ethers.BrowserProvider(provider as any);
       const signer = await ethersProvider.getSigner();
 
-      console.log("Paying balance:", pricing?.balance, "USDC");
+      console.log("Paying balance:", balanceAmount, "USDC");
 
       const receipt = await payBalance(batchId, signer);
       console.log("Transaction successful:", receipt.transactionHash);
@@ -249,27 +242,21 @@ export function BalancePaymentModal({
           )}
 
           {/* Amount Due */}
-          {pricing ? (
+          {balanceAmount ? (
             <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Total Cost</span>
-                <span className="font-medium">{pricing.total.toFixed(2)} USDC</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Deposit Paid</span>
-                <span className="text-green-600">-{(pricing.total - pricing.balance).toFixed(2)} USDC</span>
-              </div>
-              <div className="border-t border-gray-200 my-2" />
               <div className="flex justify-between">
-                <span className="font-semibold text-gray-900">Amount Due ({pricing.balancePercent}%)</span>
+                <span className="font-semibold text-gray-900">Balance Amount Due</span>
                 <span className="text-2xl font-bold text-blue-600">
-                  {pricing.balance.toFixed(2)} USDC
+                  {balanceAmount.toFixed(2)} USDC
                 </span>
               </div>
+              <p className="text-xs text-gray-500 mt-2">
+                This is the remaining payment for your DNA sequencing service.
+              </p>
             </div>
           ) : (
             <div className="bg-gray-50 rounded-lg p-4 text-center text-sm text-gray-500">
-              Loading pricing...
+              Loading balance price...
             </div>
           )}
 
@@ -291,7 +278,7 @@ export function BalancePaymentModal({
                 </div>
                 <button
                   onClick={handleApprove}
-                  disabled={processing || !pricing}
+                  disabled={processing || !balanceAmount}
                   className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   <Wallet className="w-5 h-5" />
@@ -307,7 +294,7 @@ export function BalancePaymentModal({
                 </div>
                 <button
                   onClick={handlePayBalance}
-                  disabled={processing || !pricing}
+                  disabled={processing || !balanceAmount}
                   className={`w-full px-4 py-3 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
                     isUrgent
                       ? "bg-red-600 hover:bg-red-700"
@@ -317,8 +304,8 @@ export function BalancePaymentModal({
                   <Wallet className="w-5 h-5" />
                   {processing
                     ? "Paying..."
-                    : pricing
-                      ? `Pay ${pricing.balance.toFixed(2)} USDC`
+                    : balanceAmount
+                      ? `Pay ${balanceAmount.toFixed(2)} USDC`
                       : "Loading..."}
                 </button>
               </>

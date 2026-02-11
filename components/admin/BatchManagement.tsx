@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getBatchInfo, getCurrentBatchId, transitionBatchState, BatchState, withdrawFunds, getContract, getBatchParticipants, removeParticipant, getDepositPercentage, getBalancePercentage, setDepositPercentage, setBalancePercentage, getFullPrice, updateFullPrice } from "@/lib/contract";
+import { getBatchInfo, getCurrentBatchId, transitionBatchState, BatchState, withdrawFunds, getContract, getBatchParticipants, removeParticipant, getDepositPrice, getBatchBalancePrice, setDepositPrice, setBatchBalancePrice } from "@/lib/contract";
 import { useAccount, useWalletClient } from "wagmi";
 import { ethers } from "ethers";
 import {
@@ -43,13 +43,11 @@ export function BatchManagement() {
   const [participantsBatchId, setParticipantsBatchId] = useState<number | null>(null);
   const [participants, setParticipants] = useState<string[]>([]);
   const [loadingParticipants, setLoadingParticipants] = useState(false);
-  const [showPaymentConfigModal, setShowPaymentConfigModal] = useState(false);
-  const [depositPercentage, setDepositPercentageState] = useState<number>(10);
-  const [balancePercentage, setBalancePercentageState] = useState<number>(90);
-  const [newDepositPercentage, setNewDepositPercentage] = useState<string>("10");
-  const [newBalancePercentage, setNewBalancePercentage] = useState<string>("90");
-  const [fullPrice, setFullPrice] = useState<string>("0.1");
-  const [newFullPrice, setNewFullPrice] = useState<string>("0.1");
+  const [showPricingModal, setShowPricingModal] = useState(false);
+  const [depositPrice, setDepositPriceState] = useState<string>("25");
+  const [newDepositPrice, setNewDepositPrice] = useState<string>("25");
+  const [balancePriceInput, setBalancePriceInput] = useState<string>("75");
+  const [selectedBatchForPricing, setSelectedBatchForPricing] = useState<number | null>(null);
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
 
@@ -58,7 +56,7 @@ export function BatchManagement() {
   useEffect(() => {
     loadBatches();
     loadContractBalance();
-    loadPaymentPercentages();
+    loadPricing();
   }, []);
 
   const loadBatches = async () => {
@@ -185,21 +183,16 @@ export function BatchManagement() {
     }
   };
 
-  const loadPaymentPercentages = async () => {
+  const loadPricing = async () => {
     try {
-      const deposit = await getDepositPercentage();
-      const balance = await getBalancePercentage();
-      const price = await getFullPrice();
-      const priceInEth = ethers.formatEther(price);
+      const depositPriceBigInt = await getDepositPrice();
+      // USDC has 6 decimals
+      const depositPriceUsdc = (Number(depositPriceBigInt) / 1e6).toString();
 
-      setDepositPercentageState(deposit);
-      setBalancePercentageState(balance);
-      setNewDepositPercentage(deposit.toString());
-      setNewBalancePercentage(balance.toString());
-      setFullPrice(priceInEth);
-      setNewFullPrice(priceInEth);
+      setDepositPriceState(depositPriceUsdc);
+      setNewDepositPrice(depositPriceUsdc);
     } catch (error) {
-      console.error("Error loading payment percentages:", error);
+      console.error("Error loading pricing:", error);
     }
   };
 
@@ -259,54 +252,27 @@ export function BatchManagement() {
     }
   };
 
-  const handleUpdatePaymentPercentages = async () => {
+  const handleUpdateDepositPrice = async () => {
     if (!walletClient || !address) {
       alert("Please connect your wallet first");
       return;
     }
 
-    const newDeposit = parseInt(newDepositPercentage);
-    const newBalance = parseInt(newBalancePercentage);
-    const newPriceFloat = parseFloat(newFullPrice);
-
-    if (isNaN(newDeposit) || isNaN(newBalance)) {
-      alert("Please enter valid percentages");
-      return;
-    }
+    const newPriceFloat = parseFloat(newDepositPrice);
 
     if (isNaN(newPriceFloat) || newPriceFloat <= 0) {
-      alert("Please enter a valid price");
+      alert("Please enter a valid deposit price");
       return;
     }
 
-    if (newDeposit + newBalance !== 100) {
-      alert("Percentages must sum to 100%");
-      return;
-    }
+    const priceChanged = newDepositPrice !== depositPrice;
 
-    if (newDeposit <= 0 || newDeposit >= 100) {
-      alert("Deposit percentage must be between 1 and 99");
-      return;
-    }
-
-    const priceChanged = newFullPrice !== fullPrice;
-    const percentagesChanged = newDeposit !== depositPercentage || newBalance !== balancePercentage;
-
-    if (!priceChanged && !percentagesChanged) {
+    if (!priceChanged) {
       alert("No changes to apply");
       return;
     }
 
-    let confirmMsg = "Update payment configuration?\n\n";
-    if (priceChanged) {
-      confirmMsg += `Full Price: ${fullPrice} ETH → ${newFullPrice} ETH\n`;
-    }
-    if (percentagesChanged) {
-      confirmMsg += `Split: ${depositPercentage}% / ${balancePercentage}% → ${newDeposit}% / ${newBalance}%\n`;
-    }
-    confirmMsg += `\nThis will affect all NEW participants only.`;
-
-    if (!confirm(confirmMsg)) {
+    if (!confirm(`Update deposit price from ${depositPrice} USDC to ${newDepositPrice} USDC?\n\nThis will affect all NEW participants only.`)) {
       return;
     }
 
@@ -315,25 +281,18 @@ export function BatchManagement() {
       const provider = new ethers.BrowserProvider(walletClient as any);
       const signer = await provider.getSigner();
 
-      // Update full price if changed
-      if (priceChanged) {
-        const priceInWei = ethers.parseEther(newFullPrice);
-        await updateFullPrice(priceInWei, signer);
-      }
+      // Convert USDC amount to wei (6 decimals)
+      const priceInWei = BigInt(Math.floor(newPriceFloat * 1e6));
+      await setDepositPrice(priceInWei, signer);
 
-      // Update deposit percentage if changed
-      if (percentagesChanged) {
-        await setDepositPercentage(newDeposit, signer);
-      }
+      // Reload pricing
+      await loadPricing();
 
-      // Reload percentages
-      await loadPaymentPercentages();
-
-      alert("Payment configuration updated successfully!");
-      setShowPaymentConfigModal(false);
+      alert("Deposit price updated successfully!");
+      setShowPricingModal(false);
     } catch (error: any) {
-      console.error("Error updating configuration:", error);
-      alert(`Failed to update configuration: ${error.message || "Unknown error"}`);
+      console.error("Error updating deposit price:", error);
+      alert(`Failed to update deposit price: ${error.message || "Unknown error"}`);
     } finally {
       setProcessing(false);
     }
@@ -427,8 +386,25 @@ export function BatchManagement() {
 
       console.log("Transitioning batch", batchId, "to state", nextStateName);
 
+      // If transitioning from Staged to Active, prompt for balance price
+      let balancePrice = 0n;
+      if (batch.state === "Staged" && nextStateName === "Active") {
+        const balancePriceStr = prompt("Enter balance price in USDC (e.g., 75 for $75):");
+        if (!balancePriceStr) {
+          alert("Balance price is required to activate batch");
+          return;
+        }
+        const balancePriceFloat = parseFloat(balancePriceStr);
+        if (isNaN(balancePriceFloat) || balancePriceFloat <= 0) {
+          alert("Invalid balance price");
+          return;
+        }
+        // Convert to USDC wei (6 decimals)
+        balancePrice = BigInt(Math.floor(balancePriceFloat * 1e6));
+      }
+
       // Call smart contract
-      const receipt = await transitionBatchState(batchId, newState, signer);
+      const receipt = await transitionBatchState(batchId, newState, signer, balancePrice);
       console.log("Transaction receipt:", receipt);
 
       // Reload batches from contract to get updated state
@@ -662,42 +638,33 @@ export function BatchManagement() {
         </div>
       </div>
 
-      {/* Payment Configuration Section */}
+      {/* Pricing Configuration Section */}
       <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg shadow p-6">
         <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
               <Settings className="w-6 h-6 text-blue-600" />
-              <h3 className="text-lg font-bold text-gray-900">Payment Configuration</h3>
+              <h3 className="text-lg font-bold text-gray-900">Pricing Configuration</h3>
             </div>
             <p className="text-sm text-gray-600 mb-4">
-              Configure full price and deposit/balance payment split. Changes affect NEW participants only.
+              Configure deposit price paid by users when joining. Balance prices are set per-batch when activating.
             </p>
             <div className="space-y-2 text-sm">
               <div className="flex items-center gap-2">
-                <span className="text-gray-700">Full Price:</span>
-                <span className="font-bold text-blue-600">{fullPrice} ETH</span>
+                <span className="text-gray-700">Deposit Price:</span>
+                <span className="font-bold text-blue-600">${depositPrice} USDC</span>
               </div>
-              <div className="flex items-center gap-4">
-                <div>
-                  <span className="text-gray-700">Deposit:</span>
-                  <span className="font-bold text-blue-600 ml-2">{depositPercentage}%</span>
-                  <span className="text-gray-500 ml-1">({(parseFloat(fullPrice) * depositPercentage / 100).toFixed(4)} ETH)</span>
-                </div>
-                <div>
-                  <span className="text-gray-700">Balance:</span>
-                  <span className="font-bold text-blue-600 ml-2">{balancePercentage}%</span>
-                  <span className="text-gray-500 ml-1">({(parseFloat(fullPrice) * balancePercentage / 100).toFixed(4)} ETH)</span>
-                </div>
+              <div className="text-xs text-gray-500 mt-2">
+                Balance prices vary by batch and are set when transitioning Staged → Active based on lab quotes.
               </div>
             </div>
           </div>
           <button
-            onClick={() => setShowPaymentConfigModal(true)}
+            onClick={() => setShowPricingModal(true)}
             className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2 whitespace-nowrap"
           >
             <Settings className="w-5 h-5" />
-            Configure Split
+            Update Deposit Price
           </button>
         </div>
       </div>
@@ -985,18 +952,16 @@ export function BatchManagement() {
         </div>
       )}
 
-      {/* Payment Configuration Modal */}
-      {showPaymentConfigModal && (
+      {/* Deposit Price Configuration Modal */}
+      {showPricingModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
             <div className="p-6 border-b border-gray-200 flex justify-between items-center">
-              <h2 className="text-2xl font-bold text-gray-900">Configure Payment Split</h2>
+              <h2 className="text-2xl font-bold text-gray-900">Configure Deposit Price</h2>
               <button
                 onClick={() => {
-                  setShowPaymentConfigModal(false);
-                  setNewDepositPercentage(depositPercentage.toString());
-                  setNewBalancePercentage(balancePercentage.toString());
-                  setNewFullPrice(fullPrice);
+                  setShowPricingModal(false);
+                  setNewDepositPrice(depositPrice);
                 }}
                 className="text-gray-400 hover:text-gray-600"
                 disabled={processing}
@@ -1012,8 +977,8 @@ export function BatchManagement() {
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <p className="text-sm font-medium text-blue-900 mb-2">Current Configuration</p>
                 <div className="space-y-1 text-sm text-blue-700">
-                  <div>Full Price: {fullPrice} ETH</div>
-                  <div>Split: {depositPercentage}% deposit / {balancePercentage}% balance</div>
+                  <div>Deposit Price: ${depositPrice} USDC</div>
+                  <div className="text-xs text-blue-600">Balance prices are set per-batch when activating</div>
                 </div>
               </div>
 
@@ -1024,85 +989,37 @@ export function BatchManagement() {
                   <div>
                     <p className="text-sm font-medium text-yellow-900 mb-1">⚠️ Important</p>
                     <p className="text-xs text-yellow-700">
-                      Changes only affect NEW participants. Existing participants keep their original configuration.
+                      Changes only affect NEW participants. Existing participants keep their original deposit price.
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Full Price Input */}
+              {/* Deposit Price Input */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Full Price (ETH)
+                  Deposit Price (USDC)
                 </label>
                 <div className="relative">
                   <input
                     type="number"
-                    step="0.001"
-                    min="0.001"
-                    value={newFullPrice}
-                    onChange={(e) => setNewFullPrice(e.target.value)}
+                    step="0.01"
+                    min="0.01"
+                    value={newDepositPrice}
+                    onChange={(e) => setNewDepositPrice(e.target.value)}
                     className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     disabled={processing}
                   />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500">ETH</span>
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500">USDC</span>
                 </div>
               </div>
-
-              {/* Deposit Percentage Input */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Deposit Percentage
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    min="1"
-                    max="99"
-                    value={newDepositPercentage}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value) || 0;
-                      setNewDepositPercentage(e.target.value);
-                      setNewBalancePercentage((100 - val).toString());
-                    }}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    disabled={processing}
-                  />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500">%</span>
-                </div>
-              </div>
-
-              {/* Balance Percentage (Auto-calculated) */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Balance Percentage (auto-calculated)
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    value={newBalancePercentage}
-                    readOnly
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg bg-gray-100 text-gray-700"
-                  />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500">%</span>
-                </div>
-              </div>
-
-              {/* Validation */}
-              {parseInt(newDepositPercentage) + parseInt(newBalancePercentage) !== 100 && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
-                  Percentages must sum to 100%
-                </div>
-              )}
 
               {/* Actions */}
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={() => {
-                    setShowPaymentConfigModal(false);
-                    setNewDepositPercentage(depositPercentage.toString());
-                    setNewBalancePercentage(balancePercentage.toString());
-                    setNewFullPrice(fullPrice);
+                    setShowPricingModal(false);
+                    setNewDepositPrice(depositPrice);
                   }}
                   className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg font-medium text-gray-700 hover:bg-gray-50 transition-colors"
                   disabled={processing}
@@ -1110,16 +1027,11 @@ export function BatchManagement() {
                   Cancel
                 </button>
                 <button
-                  onClick={handleUpdatePaymentPercentages}
-                  disabled={
-                    processing ||
-                    parseInt(newDepositPercentage) + parseInt(newBalancePercentage) !== 100 ||
-                    parseInt(newDepositPercentage) <= 0 ||
-                    parseInt(newDepositPercentage) >= 100
-                  }
+                  onClick={handleUpdateDepositPrice}
+                  disabled={processing || parseFloat(newDepositPrice) <= 0}
                   className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {processing ? "Processing..." : "Update Split"}
+                  {processing ? "Processing..." : "Update Deposit Price"}
                 </button>
               </div>
             </div>

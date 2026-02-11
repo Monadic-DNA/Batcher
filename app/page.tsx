@@ -149,14 +149,15 @@ export default function Home() {
 
         // If user is authenticated, check if they're in ANY batch (not just current)
         if (walletAddress) {
-          // First check if batchInfo from AuthProvider tells us which batch they're in
-          if (batchInfo && batchInfo.joined && batchInfo.batchId) {
+          // Check if userBatches array has any joined batches
+          const joinedBatch = userBatches?.find(b => b.joined);
+          if (joinedBatch) {
             try {
               // User is in a specific batch - fetch that batch's info
-              const userBatch = await getBatchInfo(batchInfo.batchId);
+              const userBatch = await getBatchInfo(joinedBatch.batchId);
               setUserBatchInfo(userBatch);
 
-              const participantData = await getParticipantInfo(batchInfo.batchId, walletAddress);
+              const participantData = await getParticipantInfo(joinedBatch.batchId, walletAddress);
               setParticipantInfo(participantData);
             } catch (err) {
               console.error("Failed to fetch user's batch info:", err);
