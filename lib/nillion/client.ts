@@ -1,8 +1,7 @@
 // Nillion client utilities for DNA Batcher
 import type { NillionUserData } from "./config";
-import { SecretVaultBuilderClient } from '@nillion/secretvaults';
-import { Signer } from '@nillion/nuc';
-import { NilauthClient } from '@nillion/nilauth-client';
+// Dynamic imports for Nillion SDK to avoid build-time resolution issues
+// These packages have native dependencies that need special handling
 import { getCollectionId } from './collections';
 
 /**
@@ -134,7 +133,12 @@ export function isValidKitId(kitId: string): boolean {
  * Builder client has full access to standard collections
  * Used server-side only with admin API key
  */
-export async function initNillionClient(): Promise<SecretVaultBuilderClient> {
+export async function initNillionClient(): Promise<any> {
+  // Dynamically import Nillion SDK modules to avoid build-time resolution
+  const { SecretVaultBuilderClient } = await import('@nillion/secretvaults');
+  const { Signer } = await import('@nillion/nuc');
+  const { NilauthClient } = await import('@nillion/nilauth-client');
+
   // Validate environment variables
   const apiKey = process.env.NILLION_API_KEY;
   const builderPrivateKey = process.env.NILLION_API_KEY;
@@ -318,7 +322,7 @@ export async function findData(
 
     // Unwrap encrypted fields from response
     const records = result.data || [];
-    return records.map(record => unwrapEncryptedFields(record));
+    return records.map((record: any) => unwrapEncryptedFields(record));
   } catch (error: any) {
     // Handle 404 errors (empty collection) gracefully
     if (Array.isArray(error) && error[0]?.error?.status === 404) {
