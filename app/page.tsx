@@ -46,6 +46,7 @@ export default function Home() {
   const [isKitRegistrationModalOpen, setIsKitRegistrationModalOpen] = useState(false);
   const [isBalancePaymentModalOpen, setIsBalancePaymentModalOpen] = useState(false);
   const [isDataRevealModalOpen, setIsDataRevealModalOpen] = useState(false);
+  const [userKitId, setUserKitId] = useState<string>("");
 
   // Initialize Dynamic on component mount
   useEffect(() => {
@@ -53,6 +54,16 @@ export default function Home() {
       initializeDynamic();
     }
   }, [isDynamicInitialized, initializeDynamic]);
+
+  // Load Kit ID from localStorage when batch info is available
+  useEffect(() => {
+    if (batchInfo?.batchId) {
+      const storedKitId = localStorage.getItem(`kit_id_batch_${batchInfo.batchId}`);
+      if (storedKitId) {
+        setUserKitId(storedKitId);
+      }
+    }
+  }, [batchInfo?.batchId]);
 
   const walletAddress = (user as any)?.verifiedCredentials?.[0]?.address;
 
@@ -580,7 +591,12 @@ export default function Home() {
                               ? new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
                               : undefined
                           }
-                          kitRegistered={false}
+                          kitRegistered={
+                            (displayBatch.commitmentHash !== undefined &&
+                            displayBatch.commitmentHash !== "0x0000000000000000000000000000000000000000000000000000000000000000") ||
+                            (participantInfo?.commitmentHash !== undefined &&
+                            participantInfo?.commitmentHash !== "0x0000000000000000000000000000000000000000000000000000000000000000")
+                          }
                           resultsAvailable={false}
                           onPayBalance={() => setIsBalancePaymentModalOpen(true)}
                           onRegisterKit={() => setIsKitRegistrationModalOpen(true)}
@@ -839,7 +855,7 @@ export default function Home() {
             isOpen={isDataRevealModalOpen}
             onClose={() => setIsDataRevealModalOpen(false)}
             batchId={batchInfo?.batchId || currentBatchId}
-            kitId="KIT-ABC12345"
+            kitId={userKitId || "Unknown"}
           />
         </>
       )}

@@ -43,6 +43,7 @@ export async function POST(request: NextRequest) {
           depositPaid: participantInfo.depositAmount > 0n,
           balancePaid: participantInfo.balancePaid,
           batchState: states[batchInfo.state],
+          commitmentHash: participantInfo.commitmentHash,
         });
       }
     }

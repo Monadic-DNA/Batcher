@@ -7,21 +7,22 @@ interface DataRevealModalProps {
   isOpen: boolean;
   onClose: () => void;
   batchId: number;
-  kitId: string;
+  kitId?: string;
 }
 
 export function DataRevealModal({
   isOpen,
   onClose,
   batchId,
-  kitId,
+  kitId: savedKitId,
 }: DataRevealModalProps) {
+  const [kitId, setKitId] = useState(savedKitId || "");
   const [pin, setPin] = useState("");
   const [showPin, setShowPin] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [decryptedData, setDecryptedData] = useState<string | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
 
   const handleVerifyPin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,31 +30,44 @@ export function DataRevealModal({
     setError(null);
 
     try {
+      // Validate Kit ID
+      if (!kitId.trim()) {
+        throw new Error("Please enter a Kit ID");
+      }
+
       // Validate PIN format
       if (!/^\d{6}$/.test(pin)) {
         throw new Error("PIN must be exactly 6 digits");
       }
 
-      // TODO: Verify PIN and decrypt data from Nillion
-      // Steps:
-      // 1. Create hash: Hash(KitID + PIN)
-      // 2. Compare with on-chain commitment hash
-      // 3. If match, fetch encrypted data from Nillion
-      // 4. Decrypt using PIN-derived key
-      // 5. Decompress CSV data
-      console.log("Verifying PIN and decrypting data...");
+      console.log("Verifying PIN and fetching results...");
       console.log("Kit ID:", kitId);
-      console.log("PIN length:", pin.length);
+      console.log("Batch ID:", batchId);
 
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Call API to verify and get download URL
+      const response = await fetch("/api/results/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          batchId,
+          kitId: kitId.trim(),
+          pin,
+        }),
+      });
 
-      // Mock decrypted data (in production, this comes from Nillion)
-      const mockData = `rs123,chr1,12345,A,G,0.75,0.0001,Diabetes risk
-rs456,chr2,67890,C,T,0.82,0.002,Height variation
-rs789,chr3,11223,G,A,0.68,0.0005,Eye color`;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Verification failed");
+      }
 
-      setDecryptedData(mockData);
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || "Verification failed");
+      }
+
+      // Set the download URL from S3
+      setDownloadUrl(result.downloadUrl);
     } catch (err) {
       setError(err instanceof Error ? err.message : "PIN verification failed");
     } finally {
@@ -62,23 +76,18 @@ rs789,chr3,11223,G,A,0.68,0.0005,Eye color`;
   };
 
   const handleDownload = () => {
-    if (!decryptedData) return;
+    if (!downloadUrl) return;
 
     setDownloading(true);
     try {
-      // Create CSV file
-      const csvContent = `rsID,Chromosome,Position,Reference,Alternate,GenotypeProbability,pValue,Trait\n${decryptedData}`;
-      const blob = new Blob([csvContent], { type: "text/csv" });
-      const url = window.URL.createObjectURL(blob);
-
-      // Trigger download
+      // Open the S3 download URL in a new window
       const a = document.createElement("a");
-      a.href = url;
+      a.href = downloadUrl;
       a.download = `dna-results-${kitId}-${new Date().toISOString().split("T")[0]}.csv`;
+      a.target = "_blank";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
 
       // Close modal after download
       setTimeout(() => {
@@ -93,7 +102,7 @@ rs789,chr3,11223,G,A,0.68,0.0005,Eye color`;
 
   const handleReset = () => {
     setPin("");
-    setDecryptedData(null);
+    setDownloadUrl(null);
     setError(null);
   };
 
@@ -121,21 +130,36 @@ rs789,chr3,11223,G,A,0.68,0.0005,Eye color`;
 
         {/* Content */}
         <div className="p-6 space-y-6">
-          {!decryptedData ? (
-            /* PIN Entry Form */
+          {!downloadUrl ? (
+            /* Kit ID and PIN Entry Form */
             <form onSubmit={handleVerifyPin} className="space-y-6">
               {/* Instructions */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex gap-3">
                 <Lock className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
                 <div>
                   <p className="text-sm font-medium text-blue-900 mb-1">
-                    Enter Your PIN to Decrypt
+                    Enter Kit ID and PIN to Download Results
                   </p>
                   <p className="text-xs text-blue-700">
-                    Use the 6-digit PIN you created when registering your DNA kit. This
-                    PIN is the only way to decrypt your results.
+                    Enter your Kit ID and the 6-digit PIN you created during registration.
+                    We'll verify your identity and provide your DNA results.
                   </p>
                 </div>
+              </div>
+
+              {/* Kit ID Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Kit ID <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={kitId}
+                  onChange={(e) => setKitId(e.target.value)}
+                  placeholder="Enter your kit ID"
+                  required
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono"
+                />
               </div>
 
               {/* PIN Input */}
@@ -210,52 +234,26 @@ rs789,chr3,11223,G,A,0.68,0.0005,Eye color`;
                 </button>
                 <button
                   type="submit"
-                  disabled={verifying || pin.length !== 6}
+                  disabled={verifying || pin.length !== 6 || !kitId.trim()}
                   className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {verifying ? "Verifying..." : "Verify & Decrypt"}
+                  {verifying ? "Verifying..." : "Verify & Get Results"}
                 </button>
               </div>
             </form>
           ) : (
-            /* Download Success View */
+            /* Download Ready View */
             <div className="space-y-6">
               {/* Success Message */}
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex gap-3">
                 <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-green-900 mb-1">
-                    Decryption Successful!
+                    Verification Successful!
                   </p>
                   <p className="text-xs text-green-700">
-                    Your DNA results have been decrypted and are ready to download.
+                    Your identity has been verified. Click below to download your DNA results.
                   </p>
-                </div>
-              </div>
-
-              {/* Data Preview */}
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm font-medium text-gray-900 mb-2">Data Preview</p>
-                <div className="bg-white rounded border border-gray-200 p-3 font-mono text-xs overflow-x-auto">
-                  <pre className="text-gray-700 whitespace-pre-wrap">
-                    {decryptedData.split("\n").slice(0, 3).join("\n")}
-                    {"\n"}...
-                  </pre>
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Full dataset contains genome-wide association data in CSV format
-                </p>
-              </div>
-
-              {/* File Info */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-blue-50 rounded-lg p-3">
-                  <p className="text-xs text-blue-700 mb-1">File Format</p>
-                  <p className="font-medium text-blue-900">CSV</p>
-                </div>
-                <div className="bg-blue-50 rounded-lg p-3">
-                  <p className="text-xs text-blue-700 mb-1">Estimated Size</p>
-                  <p className="font-medium text-blue-900">~2.5 MB</p>
                 </div>
               </div>
 

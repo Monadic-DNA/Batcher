@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.980.0",
+    "@aws-sdk/s3-request-presigner": "^3.989.0",
     "@dynamic-labs/ethereum": "^4.57.0",
     "@dynamic-labs/ethereum-aa": "^4.57.0",
     "@dynamic-labs/sdk-react-core": "^4.57.0",

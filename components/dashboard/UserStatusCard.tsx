@@ -64,7 +64,7 @@ export function UserStatusCard({
   };
 
   const getNextAction = () => {
-    if (resultsAvailable) {
+    if (resultsAvailable || batchState === "Completed") {
       return {
         title: "Results Ready!",
         description: "Your DNA results are available for download",
@@ -149,13 +149,13 @@ export function UserStatusCard({
           <p className="text-sm text-gray-600 mb-1">Payment Status</p>
           <div className="flex items-center gap-2">
             <div
-              className={`w-3 h-3 rounded-full ${depositPaid ? "bg-green-500" : "bg-gray-300"}`}
+              className={`w-4 h-4 rounded-full border-2 ${depositPaid ? "bg-green-500 border-green-600" : "bg-gray-300 border-gray-400"}`}
             />
-            <span className="text-sm">Deposit</span>
+            <span className="text-sm font-medium">{depositPaid ? "✓" : ""} Deposit</span>
             <div
-              className={`w-3 h-3 rounded-full ${balancePaid ? "bg-green-500" : "bg-gray-300"}`}
+              className={`w-4 h-4 rounded-full border-2 ${balancePaid ? "bg-green-500 border-green-600" : "bg-gray-300 border-gray-400"}`}
             />
-            <span className="text-sm">Balance</span>
+            <span className="text-sm font-medium">{balancePaid ? "✓" : ""} Balance</span>
           </div>
         </div>
       </div>
@@ -169,8 +169,8 @@ export function UserStatusCard({
                 (idx === 0 && depositPaid) ||
                 (idx === 1 && balancePaid) ||
                 (idx === 2 && kitRegistered) ||
-                (idx === 3 && batchState === "Completed") ||
-                (idx === 4 && resultsAvailable);
+                (idx === 3 && (batchState === "Sequencing" || batchState === "Completed" || batchState === "Purged")) ||
+                (idx === 4 && (resultsAvailable || batchState === "Completed" || batchState === "Purged"));
 
               return (
                 <div key={step} className="flex flex-col items-center flex-1">

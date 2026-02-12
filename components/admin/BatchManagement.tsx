@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getBatchInfo, getCurrentBatchId, transitionBatchState, BatchState, withdrawFunds, getContract, getBatchParticipants, removeParticipant, getDepositPrice, getBatchBalancePrice, setDepositPrice, setBatchBalancePrice } from "@/lib/contract";
+import { getBatchInfo, getCurrentBatchId, transitionBatchState, BatchState, withdrawFunds, getContract, getBatchParticipants, removeParticipant, getDepositPrice, getBatchBalancePrice, setDepositPrice, setBatchBalancePrice, getParticipantInfo } from "@/lib/contract";
 import { useAccount, useWalletClient } from "wagmi";
 import { ethers } from "ethers";
 import {
@@ -16,6 +16,8 @@ import {
   AlertTriangle,
   UserX,
   Settings,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 
 interface Batch {
@@ -42,6 +44,7 @@ export function BatchManagement() {
   const [showParticipantsModal, setShowParticipantsModal] = useState(false);
   const [participantsBatchId, setParticipantsBatchId] = useState<number | null>(null);
   const [participants, setParticipants] = useState<string[]>([]);
+  const [participantsWithHashes, setParticipantsWithHashes] = useState<Map<string, boolean>>(new Map());
   const [loadingParticipants, setLoadingParticipants] = useState(false);
   const [showPricingModal, setShowPricingModal] = useState(false);
   const [depositPrice, setDepositPriceState] = useState<string>("25");
@@ -77,7 +80,7 @@ export function BatchManagement() {
         participantCount: info.participantCount,
         maxBatchSize: info.maxBatchSize,
         depositsPaid: info.participantCount, // Deposits are paid when joining
-        balancesPaid: 0, // TODO: Track balance payments
+        balancesPaid: info.activeParticipantCount - info.unpaidActiveParticipants, // Calculate from unpaid count
         createdAt: new Date().toISOString(),
       }));
 
@@ -201,6 +204,33 @@ export function BatchManagement() {
       setLoadingParticipants(true);
       const addresses = await getBatchParticipants(batchId);
       setParticipants(addresses);
+
+      // Get batch info to check if it's Active or later
+      const batchInfo = await getBatchInfo(batchId);
+      const isActiveOrLater = batchInfo.state >= 2; // Active = 2, Sequencing = 3, etc.
+
+      // Fetch commitment hash status for each participant (only if batch is Active or later)
+      if (isActiveOrLater) {
+        const hashStatusMap = new Map<string, boolean>();
+        for (const address of addresses) {
+          // Skip removed participants
+          if (address === "0x0000000000000000000000000000000000000000") {
+            continue;
+          }
+          try {
+            const participantInfo = await getParticipantInfo(batchId, address);
+            // Check if commitment hash is not zero (means it's been set)
+            const hasCommitmentHash = participantInfo.commitmentHash !== "0x0000000000000000000000000000000000000000000000000000000000000000";
+            hashStatusMap.set(address, hasCommitmentHash);
+          } catch (error) {
+            console.error(`Error fetching participant info for ${address}:`, error);
+            hashStatusMap.set(address, false);
+          }
+        }
+        setParticipantsWithHashes(hashStatusMap);
+      } else {
+        setParticipantsWithHashes(new Map());
+      }
     } catch (error) {
       console.error("Error loading participants:", error);
       alert("Failed to load participants");
@@ -877,15 +907,23 @@ export function BatchManagement() {
       {/* Participants Modal */}
       {showParticipantsModal && participantsBatchId && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 flex justify-between items-center">
-              <h2 className="text-2xl font-bold text-gray-900">
-                Batch #{participantsBatchId} Participants
-              </h2>
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">
+                  Batch #{participantsBatchId} Participants
+                </h2>
+                {participantsWithHashes.size > 0 && (
+                  <p className="text-sm text-gray-600 mt-1">
+                    {Array.from(participantsWithHashes.values()).filter(Boolean).length} / {participantsWithHashes.size} commitment hashes stored
+                  </p>
+                )}
+              </div>
               <button
                 onClick={() => {
                   setShowParticipantsModal(false);
                   setParticipants([]);
+                  setParticipantsWithHashes(new Map());
                 }}
                 className="text-gray-400 hover:text-gray-600"
                 disabled={processing}
@@ -908,30 +946,53 @@ export function BatchManagement() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {participants.map((participant, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
-                    >
-                      <div className="flex-1 font-mono text-sm">
-                        {participant === "0x0000000000000000000000000000000000000000" ? (
-                          <span className="text-gray-400 line-through">{participant} (Removed)</span>
-                        ) : (
-                          participant
+                  {participants.map((participant, index) => {
+                    const isRemoved = participant === "0x0000000000000000000000000000000000000000";
+                    const hasCommitmentHash = participantsWithHashes.get(participant) || false;
+                    const showHashStatus = participantsWithHashes.size > 0 && !isRemoved;
+
+                    return (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                      >
+                        <div className="flex-1 flex items-center gap-3">
+                          <div className="font-mono text-sm flex-1">
+                            {isRemoved ? (
+                              <span className="text-gray-400 line-through">{participant} (Removed)</span>
+                            ) : (
+                              participant
+                            )}
+                          </div>
+                          {showHashStatus && (
+                            <div className="flex items-center gap-1.5">
+                              {hasCommitmentHash ? (
+                                <>
+                                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                                  <span className="text-xs font-medium text-green-700">Hash Stored</span>
+                                </>
+                              ) : (
+                                <>
+                                  <XCircle className="w-5 h-5 text-gray-400" />
+                                  <span className="text-xs font-medium text-gray-500">No Hash</span>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        {!isRemoved && (
+                          <button
+                            onClick={() => handleRemoveParticipant(participant)}
+                            disabled={processing}
+                            className="ml-4 px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-medium transition-colors text-sm flex items-center gap-2 disabled:opacity-50"
+                          >
+                            <UserX className="w-4 h-4" />
+                            Remove & Refund
+                          </button>
                         )}
                       </div>
-                      {participant !== "0x0000000000000000000000000000000000000000" && (
-                        <button
-                          onClick={() => handleRemoveParticipant(participant)}
-                          disabled={processing}
-                          className="ml-4 px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-medium transition-colors text-sm flex items-center gap-2 disabled:opacity-50"
-                        >
-                          <UserX className="w-4 h-4" />
-                          Remove & Refund
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -940,6 +1001,7 @@ export function BatchManagement() {
                   onClick={() => {
                     setShowParticipantsModal(false);
                     setParticipants([]);
+                    setParticipantsWithHashes(new Map());
                   }}
                   className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors"
                   disabled={processing}

@@ -22,6 +22,7 @@ interface BatchInfo {
   depositPaid: boolean;
   balancePaid: boolean;
   batchState: string;
+  commitmentHash?: string;
 }
 
 interface AuthContextType {

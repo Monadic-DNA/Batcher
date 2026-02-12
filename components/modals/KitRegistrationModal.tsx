@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 import { X, Lock, Package, Eye, EyeOff, AlertCircle } from "lucide-react";
+import { storeCommitmentHash } from "@/lib/contract";
+import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
+import { ethers } from "ethers";
 
 interface KitRegistrationModalProps {
   isOpen: boolean;
@@ -24,17 +27,17 @@ export function KitRegistrationModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const { primaryWallet } = useDynamicContext();
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
 
     try {
-      // Validate Kit ID format (e.g., "KIT-XXXXXXXX")
-      if (!/^KIT-[A-Z0-9]{8}$/.test(kitId.toUpperCase())) {
-        throw new Error(
-          "Invalid Kit ID format. Should be KIT-XXXXXXXX (8 characters)"
-        );
+      // Validate Kit ID is not empty
+      if (!kitId.trim()) {
+        throw new Error("Please enter a Kit ID");
       }
 
       // Validate PIN (exactly 6 digits)
@@ -47,18 +50,40 @@ export function KitRegistrationModal({
         throw new Error("PINs do not match");
       }
 
-      // TODO: Create commitment hash and submit to smart contract
-      // Steps:
-      // 1. Create hash: Hash(KitID + PIN)
-      // 2. Call contract.storeCommitmentHash(hash)
-      // 3. Store PIN hint locally (optional)
-      // 4. Confirm transaction
-      console.log("Creating commitment hash...");
-      console.log("Kit ID:", kitId.toUpperCase());
-      console.log("PIN length:", pin.length);
+      // Check wallet connection
+      if (!primaryWallet) {
+        throw new Error("Please connect your wallet first");
+      }
 
-      // Simulate transaction
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const walletConnector = await primaryWallet.connector;
+      if (!walletConnector) {
+        throw new Error("Wallet connector not available");
+      }
+
+      const provider = (walletConnector as any).getWalletClient();
+      if (!provider) {
+        throw new Error("Provider not available");
+      }
+
+      const ethersProvider = new ethers.BrowserProvider(provider as any);
+      const signer = await ethersProvider.getSigner();
+
+      // Create commitment hash: keccak256(KitID + PIN)
+      const commitmentData = kitId.trim() + pin;
+      const commitmentHash = ethers.keccak256(ethers.toUtf8Bytes(commitmentData));
+
+      console.log("Creating commitment hash...");
+      console.log("Kit ID:", kitId.trim());
+      console.log("PIN length:", pin.length);
+      console.log("Commitment Hash:", commitmentHash);
+
+      // Submit to smart contract
+
+      const receipt = await storeCommitmentHash(batchId, commitmentHash, signer);
+      console.log("Transaction receipt:", receipt);
+
+      // Optionally store kit ID locally (not the PIN!) for convenience
+      localStorage.setItem(`kit_id_batch_${batchId}`, kitId.trim());
 
       onRegisterSuccess();
       onClose();
@@ -99,8 +124,8 @@ export function KitRegistrationModal({
                 Find Your Kit ID
               </p>
               <p className="text-xs text-blue-700">
-                Look for the Kit ID printed on the label inside your DNA kit box. It
-                should look like: <strong>KIT-ABC12345</strong>
+                Look for the Kit ID printed on the label inside your DNA kit box.
+                Enter it exactly as shown on the label.
               </p>
             </div>
           </div>
@@ -113,14 +138,13 @@ export function KitRegistrationModal({
             <input
               type="text"
               value={kitId}
-              onChange={(e) => setKitId(e.target.value.toUpperCase())}
-              placeholder="KIT-ABC12345"
+              onChange={(e) => setKitId(e.target.value)}
+              placeholder="Enter your kit ID"
               required
-              maxLength={12}
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-lg"
             />
             <p className="text-xs text-gray-500 mt-1">
-              Format: KIT-XXXXXXXX (8 alphanumeric characters)
+              Enter the exact Kit ID from your kit label
             </p>
           </div>
 
