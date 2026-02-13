@@ -3,6 +3,7 @@
 import { useAuth, AuthButton } from "@/components/AuthProvider";
 import { useEffect, useState, useCallback } from "react";
 import { UserStatusCard } from "@/components/dashboard/UserStatusCard";
+import { UserActionsCard } from "@/components/dashboard/UserActionsCard";
 import { BatchHistory } from "@/components/dashboard/BatchHistory";
 import { FAQ } from "@/components/dashboard/FAQ";
 import { JoinQueueModal } from "@/components/modals/JoinQueueModal";
@@ -339,19 +340,6 @@ export default function Home() {
                   <p className="text-xs text-gray-500 mt-2">
                     State: {["Pending", "Staged", "Active", "Sequencing", "Completed", "Purged"][currentBatchInfo.state]}
                   </p>
-                  {process.env.NEXT_PUBLIC_CONTRACT_ADDRESS && process.env.NEXT_PUBLIC_CHAIN_ID !== "31337" && (
-                    <a
-                      href={getExplorerUrl(process.env.NEXT_PUBLIC_CONTRACT_ADDRESS)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline mt-2"
-                    >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                      </svg>
-                      View Contract on Explorer
-                    </a>
-                  )}
                 </div>
 
                 {/* Participant List */}
@@ -549,118 +537,100 @@ export default function Home() {
 
           {/* Column 3: User-Specific Actions */}
           <div className="bg-white rounded-lg shadow-lg p-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Your Actions</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Your Actions</h2>
+              <a
+                href="mailto:support@monadicdna.com"
+                className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 hover:underline"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Help
+              </a>
+            </div>
             {isAuthenticated ? (
               <>
-                {userBatches.length > 0 ? (
-                  <>
-                    {/* Batch Selector Dropdown (if multiple batches) */}
-                    {userBatches.length > 1 && (
-                      <div className="mb-4">
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Select Batch
-                        </label>
+                {/* Batch Selector Dropdown - Always show with user's batches + current batch */}
+                {(() => {
+                  // Combine user batches with current batch (avoiding duplicates)
+                  const allBatches = [...userBatches];
+                  if (currentBatchId && !userBatches.find(b => b.batchId === currentBatchId)) {
+                    // Add current batch if user is not in it
+                    const currentBatchState = currentBatchInfo ? ["Pending", "Staged", "Active", "Sequencing", "Completed", "Purged"][currentBatchInfo.state] : "Unknown";
+                    allBatches.push({
+                      batchId: currentBatchId,
+                      joined: false,
+                      depositPaid: false,
+                      balancePaid: false,
+                      batchState: currentBatchState,
+                    });
+                  }
+
+                  const selectedBatch = allBatches.find(
+                    b => b.batchId === (selectedUserBatchId || (userBatches.length > 0 ? userBatches[0].batchId : currentBatchId))
+                  ) || allBatches[0];
+
+                  // If no batches available, show loading/empty state
+                  if (!selectedBatch || allBatches.length === 0) {
+                    return (
+                      <div className="text-center py-8">
+                        <p className="text-sm text-gray-500">Loading batch information...</p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <>
+                      <div className="mb-6">
                         <select
-                          value={selectedUserBatchId || userBatches[0].batchId}
+                          value={selectedUserBatchId || (userBatches.length > 0 ? userBatches[0].batchId : currentBatchId)}
                           onChange={(e) => setSelectedUserBatchId(Number(e.target.value))}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
                         >
-                          {userBatches.map((batch) => (
+                          {allBatches.map((batch) => (
                             <option key={batch.batchId} value={batch.batchId}>
-                              Batch #{batch.batchId} - {batch.batchState}
+                              Batch #{batch.batchId} - {batch.batchState}{batch.joined ? " (Joined)" : " (Available)"}
                             </option>
                           ))}
                         </select>
                       </div>
-                    )}
 
-                    {/* Display selected batch info */}
-                    {(() => {
-                      const displayBatch = userBatches.find(
-                        (b) => b.batchId === (selectedUserBatchId || userBatches[0].batchId)
-                      ) || userBatches[0];
-
-                      return (
-                        <UserStatusCard
-                          batchId={displayBatch.batchId}
-                          batchState={displayBatch.batchState}
-                          depositPaid={displayBatch.depositPaid}
-                          balancePaid={displayBatch.balancePaid}
-                          paymentDeadline={
-                            displayBatch.batchState === "Active"
-                              ? new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
-                              : undefined
-                          }
+                      {selectedBatch.joined ? (
+                        <UserActionsCard
+                          batchId={selectedBatch.batchId}
+                          batchState={selectedBatch.batchState}
+                          depositPaid={selectedBatch.depositPaid}
+                          balancePaid={selectedBatch.balancePaid}
                           kitRegistered={
-                            (displayBatch.commitmentHash !== undefined &&
-                            displayBatch.commitmentHash !== "0x0000000000000000000000000000000000000000000000000000000000000000") ||
+                            (selectedBatch.commitmentHash !== undefined &&
+                            selectedBatch.commitmentHash !== "0x0000000000000000000000000000000000000000000000000000000000000000") ||
                             (participantInfo?.commitmentHash !== undefined &&
                             participantInfo?.commitmentHash !== "0x0000000000000000000000000000000000000000000000000000000000000000")
                           }
-                          resultsAvailable={false}
+                          resultsAvailable={selectedBatch.batchState === "Completed" || selectedBatch.batchState === "Purged"}
                           onPayBalance={() => setIsBalancePaymentModalOpen(true)}
                           onRegisterKit={() => setIsKitRegistrationModalOpen(true)}
                           onDownloadResults={() => setIsDataRevealModalOpen(true)}
                         />
-                      );
-                    })()}
-                  </>
-                ) : (
-                  <div className="text-center py-8">
-                    <svg
-                      className="mx-auto h-12 w-12 text-gray-400 mb-4"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
-                      />
-                    </svg>
-                    <h3 className="text-lg font-medium text-gray-900 mb-2">
-                      Not in a batch yet
-                    </h3>
-                    <p className="text-gray-600 mb-6 text-sm">
-                      Join the current batch to get started
-                    </p>
-                    <button
-                      onClick={() => setIsJoinModalOpen(true)}
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2 rounded-lg transition-colors w-full"
-                    >
-                      Join Current Batch
-                    </button>
-                  </div>
-                )}
+                      ) : (
+                        <div className="text-center py-8">
+                          <h3 className="text-lg font-semibold mb-2">Join Batch #{selectedBatch.batchId}</h3>
+                          <p className="text-sm text-gray-600 mb-4">
+                            You haven't joined this batch yet. Click below to join.
+                          </p>
+                          <button
+                            onClick={() => setIsJoinModalOpen(true)}
+                            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+                          >
+                            Join Batch
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
 
-                {/* User Wallet Info */}
-                <div className="mt-4 pt-4 border-t border-gray-200">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
-                      <svg
-                        className="w-4 h-4 text-white"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"
-                        />
-                      </svg>
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs text-gray-600">Your Wallet</p>
-                      <p className="font-mono text-xs font-medium truncate">
-                        {walletAddress?.substring(0, 8)}...{walletAddress?.substring(38)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
               </>
             ) : (
               <div className="text-center py-8">
@@ -795,6 +765,17 @@ export default function Home() {
             <p className="mt-2">
               Built with privacy by design • Powered by Nillion
             </p>
+            <p className="mt-4">
+              <a
+                href="mailto:support@monadicdna.com"
+                className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 hover:underline"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Support
+              </a>
+            </p>
           </div>
         </div>
       </footer>
@@ -808,9 +789,8 @@ export default function Home() {
             onJoinSuccess={() => {
               refreshBatch();
               fetchBatchData(); // Refresh batch data after joining
-              setIsShippingModalOpen(true);
             }}
-            batchId={currentBatchId}
+            batchId={selectedUserBatchId || currentBatchId}
             currentCount={currentBatchInfo.participantCount}
             maxSize={currentBatchInfo.maxBatchSize}
           />
@@ -822,7 +802,7 @@ export default function Home() {
               refreshBatch();
               fetchBatchData();
             }}
-            batchId={batchInfo?.batchId || currentBatchId}
+            batchId={selectedUserBatchId || currentBatchId}
           />
 
           <KitRegistrationModal
@@ -832,7 +812,7 @@ export default function Home() {
               refreshBatch();
               fetchBatchData();
             }}
-            batchId={batchInfo?.batchId || currentBatchId}
+            batchId={selectedUserBatchId || currentBatchId}
           />
 
           <BalancePaymentModal
@@ -843,7 +823,7 @@ export default function Home() {
               fetchBatchData();
               setIsShippingModalOpen(true);
             }}
-            batchId={batchInfo?.batchId || currentBatchId}
+            batchId={selectedUserBatchId || currentBatchId}
             paymentDeadline={
               participantInfo?.paymentDeadline
                 ? new Date(participantInfo.paymentDeadline * 1000)
@@ -854,7 +834,7 @@ export default function Home() {
           <DataRevealModal
             isOpen={isDataRevealModalOpen}
             onClose={() => setIsDataRevealModalOpen(false)}
-            batchId={batchInfo?.batchId || currentBatchId}
+            batchId={selectedUserBatchId || currentBatchId}
             kitId={userKitId || "Unknown"}
           />
         </>

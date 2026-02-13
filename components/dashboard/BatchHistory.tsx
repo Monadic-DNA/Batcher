@@ -47,13 +47,43 @@ export function BatchHistory({ batches, loading = false }: BatchHistoryProps) {
     }
   };
 
+  const getExplorerUrl = (address: string): string => {
+    const chainId = process.env.NEXT_PUBLIC_CHAIN_ID || "31337";
+    const explorerMap: Record<string, string> = {
+      "1": "https://etherscan.io",
+      "11155111": "https://sepolia.etherscan.io",
+      "42161": "https://arbiscan.io",
+      "421614": "https://sepolia.arbiscan.io",
+      "8453": "https://basescan.org",
+      "84532": "https://sepolia.basescan.org",
+      "31337": "http://localhost:8545", // Local hardhat - no explorer
+    };
+    const baseUrl = explorerMap[chainId] || "https://etherscan.io";
+    return chainId === "31337" ? "#" : `${baseUrl}/address/${address}`;
+  };
+
   return (
     <div className="bg-white rounded-lg shadow-lg p-6">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-xl font-bold text-gray-900">Batch History</h3>
-        <span className="text-sm text-gray-500">
-          {batches.length} batch{batches.length !== 1 ? "es" : ""}
-        </span>
+        <div className="flex items-center gap-4">
+          {process.env.NEXT_PUBLIC_CONTRACT_ADDRESS && process.env.NEXT_PUBLIC_CHAIN_ID !== "31337" && (
+            <a
+              href={getExplorerUrl(process.env.NEXT_PUBLIC_CONTRACT_ADDRESS)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              View Contract
+            </a>
+          )}
+          <span className="text-sm text-gray-500">
+            {batches.length} batch{batches.length !== 1 ? "es" : ""}
+          </span>
+        </div>
       </div>
 
       {batches.length === 0 ? (
