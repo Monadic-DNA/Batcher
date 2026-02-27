@@ -446,9 +446,9 @@ export default function Home() {
                   1
                 </div>
                 <div>
-                  <h3 className="font-semibold text-sm text-gray-900">Join & Deposit</h3>
+                  <h3 className="font-semibold text-sm text-gray-900">Join the Current Batch</h3>
                   <p className="text-xs text-gray-600 mt-1">
-                    Pay 10% deposit to join the current batch
+                    Sign in and pay a deposit to join
                   </p>
                 </div>
               </div>
@@ -458,9 +458,9 @@ export default function Home() {
                   2
                 </div>
                 <div>
-                  <h3 className="font-semibold text-sm text-gray-900">Wait for Batch</h3>
+                  <h3 className="font-semibold text-sm text-gray-900">Wait for Batch to Fill</h3>
                   <p className="text-xs text-gray-600 mt-1">
-                    Batch activates when 24 participants join
+                    Batch activates when enough participants join
                   </p>
                 </div>
               </div>
@@ -470,9 +470,9 @@ export default function Home() {
                   3
                 </div>
                 <div>
-                  <h3 className="font-semibold text-sm text-gray-900">Pay Balance</h3>
+                  <h3 className="font-semibold text-sm text-gray-900">Pay Your Balance</h3>
                   <p className="text-xs text-gray-600 mt-1">
-                    Complete payment (90%) within 7 days
+                    After notification, you have seven days to pay your balance
                   </p>
                 </div>
               </div>
@@ -484,7 +484,7 @@ export default function Home() {
                 <div>
                   <h3 className="font-semibold text-sm text-gray-900">Register Kit</h3>
                   <p className="text-xs text-gray-600 mt-1">
-                    Receive kit, register with secure PIN
+                    Receive or procure a kit and register it anonymously with a secure PIN
                   </p>
                 </div>
               </div>
@@ -496,7 +496,7 @@ export default function Home() {
                 <div>
                   <h3 className="font-semibold text-sm text-gray-900">Lab Processing</h3>
                   <p className="text-xs text-gray-600 mt-1">
-                    Send sample, lab processes batch (2-4 weeks)
+                    Send saliva sample by mail for lab processesing (usually a few weeks)
                   </p>
                 </div>
               </div>
@@ -693,10 +693,9 @@ export default function Home() {
                 />
               </svg>
             </div>
-            <h4 className="font-semibold text-lg mb-2">Privacy First</h4>
+            <h4 className="font-semibold text-lg mb-2">Anomymous</h4>
             <p className="text-sm text-gray-600">
-              Your data is encrypted and stored securely using Nillion&apos;s privacy technology.
-              Only you can decrypt it with your PIN.
+              We do not collect your personal information and we do not share your identity with our lab partners.
             </p>
           </div>
 
@@ -716,10 +715,9 @@ export default function Home() {
                 />
               </svg>
             </div>
-            <h4 className="font-semibold text-lg mb-2">Fair Coordination</h4>
+            <h4 className="font-semibold text-lg mb-2">Private</h4>
             <p className="text-sm text-gray-600">
-              Automated batch coordination with built-in fairness guarantees and
-              transparent state management.
+              Your data is not shared or resold. All genetic data is destroyed after the claim period.
             </p>
           </div>
 
@@ -741,8 +739,7 @@ export default function Home() {
             </div>
             <h4 className="font-semibold text-lg mb-2">Flexible Payments</h4>
             <p className="text-sm text-gray-600">
-              Pay with your credit card or preferred digital payment method. Split payments:
-              10% deposit + 90% balance.
+              Use your credit card or pay with stablecoins.
             </p>
           </div>
           </div>
