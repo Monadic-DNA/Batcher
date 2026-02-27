@@ -31,7 +31,6 @@ export function JoinQueueModal({
   const [discountCodeValid, setDiscountCodeValid] = useState(false);
   const [discountCodeChecking, setDiscountCodeChecking] = useState(false);
   const [discountedAmount, setDiscountedAmount] = useState<number | null>(null);
-  const [discountInfo, setDiscountInfo] = useState<any>(null);
 
   const { primaryWallet } = useDynamicContext();
 
@@ -61,7 +60,6 @@ export function JoinQueueModal({
       if (!discountCode || !primaryWallet || !depositAmount) {
         setDiscountCodeValid(false);
         setDiscountedAmount(null);
-        setDiscountInfo(null);
         return;
       }
 
@@ -73,10 +71,8 @@ export function JoinQueueModal({
         if (!info.active || info.remainingUses === 0 || userUsed || !info.appliesToDeposit) {
           setDiscountCodeValid(false);
           setDiscountedAmount(null);
-          setDiscountInfo(null);
         } else {
           setDiscountCodeValid(true);
-          setDiscountInfo(info);
 
           // Calculate discounted amount
           let discounted = depositAmount;
@@ -93,7 +89,6 @@ export function JoinQueueModal({
         console.error("Failed to validate discount code:", err);
         setDiscountCodeValid(false);
         setDiscountedAmount(null);
-        setDiscountInfo(null);
       } finally {
         setDiscountCodeChecking(false);
       }

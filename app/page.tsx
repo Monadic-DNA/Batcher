@@ -584,7 +584,7 @@ export default function Home() {
                     <>
                       <div className="mb-6">
                         <select
-                          value={selectedUserBatchId || (userBatches.length > 0 ? userBatches[0].batchId : currentBatchId)}
+                          value={selectedUserBatchId ?? (userBatches.length > 0 ? userBatches[0].batchId : (currentBatchId ?? 1))}
                           onChange={(e) => setSelectedUserBatchId(Number(e.target.value))}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
                         >
@@ -617,7 +617,7 @@ export default function Home() {
                         <div className="text-center py-8">
                           <h3 className="text-lg font-semibold mb-2">Join Batch #{selectedBatch.batchId}</h3>
                           <p className="text-sm text-gray-600 mb-4">
-                            You haven't joined this batch yet. Click below to join.
+                            You haven&apos;t joined this batch yet. Click below to join.
                           </p>
                           <button
                             onClick={() => setIsJoinModalOpen(true)}
