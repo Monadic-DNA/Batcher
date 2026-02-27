@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, Wallet } from "lucide-react";
+import { X, Wallet, Tag } from "lucide-react";
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { ethers } from "ethers";
-import { joinBatch, getDepositPrice, approveUsdcSpending, getUsdcAllowance } from "@/lib/contract";
+import { joinBatch, joinBatchWithDiscount, getDepositPrice, approveUsdcSpending, getUsdcAllowance, getDiscountCodeInfo, hasUserUsedDiscount } from "@/lib/contract";
 
 interface JoinQueueModalProps {
   isOpen: boolean;
@@ -27,6 +27,11 @@ export function JoinQueueModal({
   const [error, setError] = useState<string | null>(null);
   const [needsApproval, setNeedsApproval] = useState(true);
   const [depositAmount, setDepositAmount] = useState<number | null>(null);
+  const [discountCode, setDiscountCode] = useState<string>("");
+  const [discountCodeValid, setDiscountCodeValid] = useState(false);
+  const [discountCodeChecking, setDiscountCodeChecking] = useState(false);
+  const [discountedAmount, setDiscountedAmount] = useState<number | null>(null);
+  const [discountInfo, setDiscountInfo] = useState<any>(null);
 
   const { primaryWallet } = useDynamicContext();
 
@@ -50,6 +55,54 @@ export function JoinQueueModal({
     }
   }, [isOpen]);
 
+  // Check discount code validity
+  useEffect(() => {
+    const checkDiscountCode = async () => {
+      if (!discountCode || !primaryWallet || !depositAmount) {
+        setDiscountCodeValid(false);
+        setDiscountedAmount(null);
+        setDiscountInfo(null);
+        return;
+      }
+
+      setDiscountCodeChecking(true);
+      try {
+        const info = await getDiscountCodeInfo(discountCode);
+        const userUsed = await hasUserUsedDiscount(primaryWallet.address, discountCode);
+
+        if (!info.active || info.remainingUses === 0 || userUsed || !info.appliesToDeposit) {
+          setDiscountCodeValid(false);
+          setDiscountedAmount(null);
+          setDiscountInfo(null);
+        } else {
+          setDiscountCodeValid(true);
+          setDiscountInfo(info);
+
+          // Calculate discounted amount
+          let discounted = depositAmount;
+          if (info.isPercentage) {
+            const discountPercent = Number(info.discountValue);
+            discounted = depositAmount * (1 - discountPercent / 100);
+          } else {
+            const discountUsdc = Number(info.discountValue) / 1e6;
+            discounted = Math.max(0, depositAmount - discountUsdc);
+          }
+          setDiscountedAmount(discounted);
+        }
+      } catch (err) {
+        console.error("Failed to validate discount code:", err);
+        setDiscountCodeValid(false);
+        setDiscountedAmount(null);
+        setDiscountInfo(null);
+      } finally {
+        setDiscountCodeChecking(false);
+      }
+    };
+
+    const debounce = setTimeout(checkDiscountCode, 500);
+    return () => clearTimeout(debounce);
+  }, [discountCode, primaryWallet, depositAmount]);
+
   // Check if USDC approval is needed
   useEffect(() => {
     const checkApproval = async () => {
@@ -58,7 +111,9 @@ export function JoinQueueModal({
       try {
         const address = primaryWallet.address;
         const allowance = await getUsdcAllowance(address);
-        const depositAmountWei = BigInt(Math.floor(depositAmount * 1e6));
+        // Use discounted amount if valid discount code
+        const amountToCheck = discountCodeValid && discountedAmount !== null ? discountedAmount : depositAmount;
+        const depositAmountWei = BigInt(Math.floor(amountToCheck * 1e6));
 
         setNeedsApproval(allowance < depositAmountWei);
       } catch (err) {
@@ -69,7 +124,7 @@ export function JoinQueueModal({
     if (isOpen && primaryWallet && depositAmount) {
       checkApproval();
     }
-  }, [isOpen, primaryWallet, depositAmount]);
+  }, [isOpen, primaryWallet, depositAmount, discountCodeValid, discountedAmount]);
 
   const handleApprove = async () => {
     setProcessing(true);
@@ -132,9 +187,12 @@ export function JoinQueueModal({
       const ethersProvider = new ethers.BrowserProvider(provider as any);
       const signer = await ethersProvider.getSigner();
 
-      console.log("Joining batch with USDC deposit:", depositAmount, "USDC");
+      const finalAmount = discountCodeValid && discountedAmount !== null ? discountedAmount : depositAmount;
+      console.log("Joining batch with USDC deposit:", finalAmount, "USDC", discountCodeValid ? "(with discount)" : "");
 
-      const receipt = await joinBatch(signer);
+      const receipt = discountCodeValid && discountCode
+        ? await joinBatchWithDiscount(discountCode, signer)
+        : await joinBatch(signer);
       console.log("Transaction successful:", receipt.transactionHash);
 
       onJoinSuccess();
@@ -184,17 +242,67 @@ export function JoinQueueModal({
             </div>
           </div>
 
+          {/* Discount Code Input */}
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-gray-700">
+              Discount Code (Optional)
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                value={discountCode}
+                onChange={(e) => setDiscountCode(e.target.value.toUpperCase())}
+                placeholder="Enter code"
+                className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 uppercase"
+                disabled={processing}
+              />
+              <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            </div>
+            {discountCodeChecking && (
+              <p className="text-xs text-gray-500">Validating code...</p>
+            )}
+            {discountCode && !discountCodeChecking && discountCodeValid && (
+              <p className="text-xs text-green-600">✓ Valid discount code applied!</p>
+            )}
+            {discountCode && !discountCodeChecking && !discountCodeValid && (
+              <p className="text-xs text-red-600">Invalid or expired discount code</p>
+            )}
+          </div>
+
           {/* Pricing Breakdown */}
           <div className="space-y-3">
             <h3 className="font-semibold text-gray-900">Pricing (USDC)</h3>
             {depositAmount ? (
               <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Deposit (Now)</span>
-                  <span className="font-bold text-blue-600">
-                    {depositAmount.toFixed(2)} USDC
-                  </span>
-                </div>
+                {discountCodeValid && discountedAmount !== null ? (
+                  <>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">Original Price</span>
+                      <span className="line-through text-gray-400">
+                        {depositAmount.toFixed(2)} USDC
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">Discount</span>
+                      <span className="text-green-600">
+                        -{(depositAmount - discountedAmount).toFixed(2)} USDC
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-lg border-t pt-2">
+                      <span className="font-bold text-gray-900">Deposit (Now)</span>
+                      <span className="font-bold text-green-600">
+                        {discountedAmount.toFixed(2)} USDC
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Deposit (Now)</span>
+                    <span className="font-bold text-blue-600">
+                      {depositAmount.toFixed(2)} USDC
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600">Balance (Later)</span>
                   <span className="font-medium text-gray-500">

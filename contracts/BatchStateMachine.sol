@@ -38,6 +38,16 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         uint256 paymentDeadline; // 7 days after batch becomes Active
     }
 
+    // Discount code data
+    struct DiscountCode {
+        uint256 discountValue;      // Amount in USDC (6 decimals) or percentage (0-100)
+        bool isPercentage;          // true = percentage off, false = fixed amount off
+        uint256 remainingUses;      // Number of times code can still be used
+        bool active;                // Admin can deactivate without deleting
+        bool appliesToDeposit;      // Can be used for deposit payment
+        bool appliesToBalance;      // Can be used for balance payment
+    }
+
     // Batch data
     struct Batch {
         uint256 batchId;
@@ -75,6 +85,10 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     // Slashed funds accumulator (admin can withdraw)
     uint256 public slashedFunds;
 
+    // Discount codes
+    mapping(bytes32 => DiscountCode) public discountCodes;
+    mapping(address => mapping(bytes32 => bool)) public userUsedDiscount; // Prevent reuse per user
+
     // State
     uint256 public currentBatchId;
     mapping(uint256 => Batch) public batches;
@@ -94,6 +108,9 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     event ParticipantRemoved(uint256 indexed batchId, address indexed user, uint256 refundAmount, bool balancePaid, bool slashed);
     event DepositPriceChanged(uint256 oldPrice, uint256 newPrice);
     event BalancePriceSet(uint256 indexed batchId, uint256 balancePrice);
+    event DiscountCodeRegistered(bytes32 indexed codeHash, uint256 discountValue, bool isPercentage, uint256 maxUses, bool appliesToDeposit, bool appliesToBalance);
+    event DiscountCodeUsed(bytes32 indexed codeHash, address indexed user, uint256 discountAmount, bool forDeposit);
+    event DiscountCodeDeactivated(bytes32 indexed codeHash);
 
     constructor(address _usdcToken) Ownable(msg.sender) {
         require(_usdcToken != address(0), "Invalid USDC address");
@@ -119,17 +136,42 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
      * @dev Join the current pending batch with deposit (uses USDC)
      */
     function joinBatch() external nonReentrant whenNotPaused {
+        _joinBatch(bytes32(0));
+    }
+
+    /**
+     * @dev Join the current pending batch with deposit using a discount code
+     * @param discountCodeHash keccak256 hash of the discount code
+     */
+    function joinBatchWithDiscount(bytes32 discountCodeHash) external nonReentrant whenNotPaused {
+        _joinBatch(discountCodeHash);
+    }
+
+    /**
+     * @dev Internal function to join batch with optional discount
+     */
+    function _joinBatch(bytes32 discountCodeHash) internal {
         Batch storage batch = batches[currentBatchId];
         require(batch.state == BatchState.Pending, "Batch not accepting participants");
         require(batch.activeParticipantCount < batch.maxBatchSize, "Batch is full");
         require(batch.participantIndex[msg.sender] == 0, "Already joined this batch");
+
+        // Calculate deposit amount (with discount if applicable)
+        uint256 actualDepositAmount = depositPrice;
+        uint256 discountAmount = 0;
+
+        if (discountCodeHash != bytes32(0)) {
+            discountAmount = _validateAndConsumeDiscount(discountCodeHash, true); // true = for deposit
+            actualDepositAmount = _calculateDiscountedPrice(depositPrice, discountCodeHash);
+            emit DiscountCodeUsed(discountCodeHash, msg.sender, depositPrice - actualDepositAmount, true);
+        }
 
         // Add participant (EFFECTS - update state before external call)
         uint256 index = batch.participantCount + 1; // 1-indexed to distinguish from default 0
         batch.participants[index] = Participant({
             wallet: msg.sender,
             commitmentHash: bytes32(0),
-            depositAmount: depositPrice,
+            depositAmount: actualDepositAmount,
             balanceAmount: 0,
             balancePaid: false,
             slashed: false,
@@ -140,10 +182,10 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         batch.participantCount++;
         batch.activeParticipantCount++;
 
-        emit UserJoined(currentBatchId, msg.sender, depositPrice);
+        emit UserJoined(currentBatchId, msg.sender, actualDepositAmount);
 
         // Transfer USDC from user to contract (INTERACTIONS - external call last)
-        usdcToken.safeTransferFrom(msg.sender, address(this), depositPrice);
+        usdcToken.safeTransferFrom(msg.sender, address(this), actualDepositAmount);
 
         // Auto-transition to Staged if batch is full (optional)
         // Batch can also be manually progressed by admin with fewer participants
@@ -157,6 +199,22 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
      * Allows payment within payment window + patience timer (6 months grace period)
      */
     function payBalance(uint256 batchId) external nonReentrant whenNotPaused {
+        _payBalance(batchId, bytes32(0));
+    }
+
+    /**
+     * @dev Pay the balance payment with a discount code
+     * @param batchId The batch ID
+     * @param discountCodeHash keccak256 hash of the discount code
+     */
+    function payBalanceWithDiscount(uint256 batchId, bytes32 discountCodeHash) external nonReentrant whenNotPaused {
+        _payBalance(batchId, discountCodeHash);
+    }
+
+    /**
+     * @dev Internal function to pay balance with optional discount
+     */
+    function _payBalance(uint256 batchId, bytes32 discountCodeHash) internal {
         Batch storage batch = batches[batchId];
         require(batch.state == BatchState.Active, "Batch not active");
 
@@ -175,17 +233,26 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
             "Payment window and patience timer expired"
         );
 
+        // Calculate actual balance amount (with discount if applicable)
+        uint256 actualBalanceAmount = balanceAmount;
+
+        if (discountCodeHash != bytes32(0)) {
+            _validateAndConsumeDiscount(discountCodeHash, false); // false = for balance payment
+            actualBalanceAmount = _calculateDiscountedPrice(balanceAmount, discountCodeHash);
+            emit DiscountCodeUsed(discountCodeHash, msg.sender, balanceAmount - actualBalanceAmount, false);
+        }
+
         // Update state (EFFECTS - before external call)
-        participant.balanceAmount = balanceAmount;
+        participant.balanceAmount = actualBalanceAmount;
         participant.balancePaid = true;
 
         // Decrement unpaid counter
         batch.unpaidActiveParticipants--;
 
-        emit BalancePaymentReceived(batchId, msg.sender, balanceAmount);
+        emit BalancePaymentReceived(batchId, msg.sender, actualBalanceAmount);
 
         // Transfer USDC from user to contract (INTERACTIONS - external call last)
-        usdcToken.safeTransferFrom(msg.sender, address(this), balanceAmount);
+        usdcToken.safeTransferFrom(msg.sender, address(this), actualBalanceAmount);
     }
 
     /**
@@ -623,6 +690,106 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         if (batch.activeParticipantCount == newSize) {
             _transitionBatchState(batchId, BatchState.Staged);
         }
+    }
+
+    /**
+     * @dev Register a new discount code (admin only)
+     * @param codeHash keccak256 hash of the discount code string
+     * @param discountValue Amount in USDC (6 decimals) or percentage (0-100)
+     * @param isPercentage true = percentage discount, false = fixed amount discount
+     * @param maxUses Maximum number of times this code can be used
+     * @param appliesToDeposit Can be used for deposit payments
+     * @param appliesToBalance Can be used for balance payments
+     */
+    function registerDiscountCode(
+        bytes32 codeHash,
+        uint256 discountValue,
+        bool isPercentage,
+        uint256 maxUses,
+        bool appliesToDeposit,
+        bool appliesToBalance
+    ) external onlyOwner {
+        require(codeHash != bytes32(0), "Invalid code hash");
+        require(maxUses > 0, "Max uses must be greater than 0");
+        require(appliesToDeposit || appliesToBalance, "Code must apply to at least one payment type");
+
+        if (isPercentage) {
+            require(discountValue > 0 && discountValue <= 100, "Percentage must be between 1-100");
+        } else {
+            require(discountValue > 0, "Discount amount must be greater than 0");
+        }
+
+        discountCodes[codeHash] = DiscountCode({
+            discountValue: discountValue,
+            isPercentage: isPercentage,
+            remainingUses: maxUses,
+            active: true,
+            appliesToDeposit: appliesToDeposit,
+            appliesToBalance: appliesToBalance
+        });
+
+        emit DiscountCodeRegistered(codeHash, discountValue, isPercentage, maxUses, appliesToDeposit, appliesToBalance);
+    }
+
+    /**
+     * @dev Deactivate a discount code (admin only)
+     * Prevents further use without deleting historical data
+     */
+    function deactivateDiscountCode(bytes32 codeHash) external onlyOwner {
+        require(discountCodes[codeHash].remainingUses > 0 || discountCodes[codeHash].active, "Code does not exist");
+        discountCodes[codeHash].active = false;
+        emit DiscountCodeDeactivated(codeHash);
+    }
+
+    /**
+     * @dev Calculate discounted price
+     * @param originalPrice Original price before discount
+     * @param codeHash Discount code hash
+     * @return Discounted price (cannot be negative)
+     */
+    function _calculateDiscountedPrice(uint256 originalPrice, bytes32 codeHash) internal view returns (uint256) {
+        DiscountCode storage code = discountCodes[codeHash];
+
+        if (code.isPercentage) {
+            // Percentage discount: reduce by percentage
+            uint256 discountAmount = (originalPrice * code.discountValue) / 100;
+            return originalPrice - discountAmount;
+        } else {
+            // Fixed amount discount: subtract fixed amount (floor at 0)
+            if (code.discountValue >= originalPrice) {
+                return 0;
+            }
+            return originalPrice - code.discountValue;
+        }
+    }
+
+    /**
+     * @dev Validate and consume a discount code
+     * @param codeHash Discount code hash
+     * @param forDeposit true if for deposit payment, false if for balance payment
+     * @return discountedAmount The amount saved
+     */
+    function _validateAndConsumeDiscount(bytes32 codeHash, bool forDeposit) internal returns (uint256) {
+        require(codeHash != bytes32(0), "Code hash cannot be zero");
+
+        DiscountCode storage code = discountCodes[codeHash];
+        require(code.active, "Discount code is not active");
+        require(code.remainingUses > 0, "Discount code has no remaining uses");
+        require(!userUsedDiscount[msg.sender][codeHash], "You have already used this discount code");
+
+        if (forDeposit) {
+            require(code.appliesToDeposit, "This code does not apply to deposits");
+        } else {
+            require(code.appliesToBalance, "This code does not apply to balance payments");
+        }
+
+        // Mark as used by this user
+        userUsedDiscount[msg.sender][codeHash] = true;
+
+        // Decrement remaining uses
+        code.remainingUses--;
+
+        return code.discountValue; // Return for event emission
     }
 
     /**

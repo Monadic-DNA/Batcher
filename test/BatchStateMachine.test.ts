@@ -580,4 +580,476 @@ describe("BatchStateMachine", function () {
       expect(user2Info.depositAmount).to.equal(newDepositPrice);
     });
   });
+
+  describe("Discount Codes", function () {
+    const discountCode = "SAVE20";
+    const discountCodeHash = ethers.keccak256(ethers.toUtf8Bytes(discountCode));
+    const percentageDiscount = 20n; // 20%
+    const fixedDiscount = BigInt(5 * 10 ** USDC_DECIMALS); // 5 USDC
+    const maxUses = 10;
+
+    describe("Discount Code Registration", function () {
+      it("Should allow owner to register percentage discount code", async function () {
+        await expect(
+          batchContract.registerDiscountCode(
+            discountCodeHash,
+            percentageDiscount,
+            true, // isPercentage
+            maxUses,
+            true, // appliesToDeposit
+            true  // appliesToBalance
+          )
+        )
+          .to.emit(batchContract, "DiscountCodeRegistered")
+          .withArgs(discountCodeHash, percentageDiscount, true, maxUses, true, true);
+
+        const codeInfo = await batchContract.discountCodes(discountCodeHash);
+        expect(codeInfo.discountValue).to.equal(percentageDiscount);
+        expect(codeInfo.isPercentage).to.be.true;
+        expect(codeInfo.remainingUses).to.equal(maxUses);
+        expect(codeInfo.active).to.be.true;
+        expect(codeInfo.appliesToDeposit).to.be.true;
+        expect(codeInfo.appliesToBalance).to.be.true;
+      });
+
+      it("Should allow owner to register fixed amount discount code", async function () {
+        await expect(
+          batchContract.registerDiscountCode(
+            discountCodeHash,
+            fixedDiscount,
+            false, // isPercentage
+            maxUses,
+            true,
+            false // only for deposits
+          )
+        )
+          .to.emit(batchContract, "DiscountCodeRegistered")
+          .withArgs(discountCodeHash, fixedDiscount, false, maxUses, true, false);
+
+        const codeInfo = await batchContract.discountCodes(discountCodeHash);
+        expect(codeInfo.discountValue).to.equal(fixedDiscount);
+        expect(codeInfo.isPercentage).to.be.false;
+        expect(codeInfo.appliesToBalance).to.be.false;
+      });
+
+      it("Should not allow non-owner to register discount code", async function () {
+        await expect(
+          batchContract.connect(user1).registerDiscountCode(
+            discountCodeHash,
+            percentageDiscount,
+            true,
+            maxUses,
+            true,
+            true
+          )
+        ).to.be.revertedWithCustomError(batchContract, "OwnableUnauthorizedAccount");
+      });
+
+      it("Should reject invalid percentage values", async function () {
+        await expect(
+          batchContract.registerDiscountCode(
+            discountCodeHash,
+            0n, // 0%
+            true,
+            maxUses,
+            true,
+            true
+          )
+        ).to.be.revertedWith("Percentage must be between 1-100");
+
+        await expect(
+          batchContract.registerDiscountCode(
+            discountCodeHash,
+            101n, // 101%
+            true,
+            maxUses,
+            true,
+            true
+          )
+        ).to.be.revertedWith("Percentage must be between 1-100");
+      });
+
+      it("Should reject zero max uses", async function () {
+        await expect(
+          batchContract.registerDiscountCode(
+            discountCodeHash,
+            percentageDiscount,
+            true,
+            0, // zero uses
+            true,
+            true
+          )
+        ).to.be.revertedWith("Max uses must be greater than 0");
+      });
+
+      it("Should reject code that doesn't apply to any payment type", async function () {
+        await expect(
+          batchContract.registerDiscountCode(
+            discountCodeHash,
+            percentageDiscount,
+            true,
+            maxUses,
+            false, // doesn't apply to deposit
+            false  // doesn't apply to balance
+          )
+        ).to.be.revertedWith("Code must apply to at least one payment type");
+      });
+    });
+
+    describe("Discount Code Deactivation", function () {
+      beforeEach(async function () {
+        await batchContract.registerDiscountCode(
+          discountCodeHash,
+          percentageDiscount,
+          true,
+          maxUses,
+          true,
+          true
+        );
+      });
+
+      it("Should allow owner to deactivate discount code", async function () {
+        await expect(batchContract.deactivateDiscountCode(discountCodeHash))
+          .to.emit(batchContract, "DiscountCodeDeactivated")
+          .withArgs(discountCodeHash);
+
+        const codeInfo = await batchContract.discountCodes(discountCodeHash);
+        expect(codeInfo.active).to.be.false;
+      });
+
+      it("Should not allow non-owner to deactivate discount code", async function () {
+        await expect(
+          batchContract.connect(user1).deactivateDiscountCode(discountCodeHash)
+        ).to.be.revertedWithCustomError(batchContract, "OwnableUnauthorizedAccount");
+      });
+    });
+
+    describe("Join Batch With Discount", function () {
+      beforeEach(async function () {
+        // Register 20% discount code for deposits
+        await batchContract.registerDiscountCode(
+          discountCodeHash,
+          percentageDiscount,
+          true,
+          maxUses,
+          true, // applies to deposit
+          false // doesn't apply to balance
+        );
+      });
+
+      it("Should allow joining with valid percentage discount code", async function () {
+        const discountedAmount = (DEPOSIT_AMOUNT * 80n) / 100n; // 20% off
+        const discountSaved = DEPOSIT_AMOUNT - discountedAmount;
+
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), discountedAmount);
+
+        await expect(
+          batchContract.connect(user1).joinBatchWithDiscount(discountCodeHash)
+        )
+          .to.emit(batchContract, "UserJoined")
+          .withArgs(1, user1.address, discountedAmount)
+          .and.to.emit(batchContract, "DiscountCodeUsed")
+          .withArgs(discountCodeHash, user1.address, discountSaved, true);
+
+        const participantInfo = await batchContract.getParticipantInfo(1, user1.address);
+        expect(participantInfo.depositAmount).to.equal(discountedAmount);
+
+        // Check code remaining uses decremented
+        const codeInfo = await batchContract.discountCodes(discountCodeHash);
+        expect(codeInfo.remainingUses).to.equal(maxUses - 1);
+
+        // Check user marked as having used the code
+        expect(await batchContract.userUsedDiscount(user1.address, discountCodeHash)).to.be.true;
+      });
+
+      it("Should allow joining with fixed amount discount code", async function () {
+        // Register fixed amount discount
+        const fixedDiscountHash = ethers.keccak256(ethers.toUtf8Bytes("FIXED5"));
+        await batchContract.registerDiscountCode(
+          fixedDiscountHash,
+          fixedDiscount, // 5 USDC off
+          false,
+          maxUses,
+          true,
+          false
+        );
+
+        const discountedAmount = DEPOSIT_AMOUNT - fixedDiscount;
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), discountedAmount);
+
+        await expect(
+          batchContract.connect(user1).joinBatchWithDiscount(fixedDiscountHash)
+        )
+          .to.emit(batchContract, "UserJoined")
+          .withArgs(1, user1.address, discountedAmount);
+
+        const participantInfo = await batchContract.getParticipantInfo(1, user1.address);
+        expect(participantInfo.depositAmount).to.equal(discountedAmount);
+      });
+
+      it("Should handle 100% discount (free join)", async function () {
+        const freeCodeHash = ethers.keccak256(ethers.toUtf8Bytes("FREE100"));
+        await batchContract.registerDiscountCode(
+          freeCodeHash,
+          100n, // 100% off
+          true,
+          5,
+          true,
+          false
+        );
+
+        // No approval needed for 0 amount
+        await expect(
+          batchContract.connect(user1).joinBatchWithDiscount(freeCodeHash)
+        )
+          .to.emit(batchContract, "UserJoined")
+          .withArgs(1, user1.address, 0n);
+
+        const participantInfo = await batchContract.getParticipantInfo(1, user1.address);
+        expect(participantInfo.depositAmount).to.equal(0n);
+      });
+
+      it("Should reject inactive discount code", async function () {
+        await batchContract.deactivateDiscountCode(discountCodeHash);
+
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), DEPOSIT_AMOUNT);
+        await expect(
+          batchContract.connect(user1).joinBatchWithDiscount(discountCodeHash)
+        ).to.be.revertedWith("Discount code is not active");
+      });
+
+      it("Should reject discount code with no remaining uses", async function () {
+        // Register code with only 1 use
+        const oneUseHash = ethers.keccak256(ethers.toUtf8Bytes("ONEUSE"));
+        await batchContract.registerDiscountCode(
+          oneUseHash,
+          percentageDiscount,
+          true,
+          1, // only 1 use
+          true,
+          false
+        );
+
+        // First user uses it successfully
+        const discountedAmount = (DEPOSIT_AMOUNT * 80n) / 100n;
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), discountedAmount);
+        await batchContract.connect(user1).joinBatchWithDiscount(oneUseHash);
+
+        // Second user should be rejected
+        await usdcToken.connect(user2).approve(await batchContract.getAddress(), discountedAmount);
+        await expect(
+          batchContract.connect(user2).joinBatchWithDiscount(oneUseHash)
+        ).to.be.revertedWith("Discount code has no remaining uses");
+      });
+
+      it("Should reject reuse of discount code by same user", async function () {
+        const discountedAmount = (DEPOSIT_AMOUNT * 80n) / 100n;
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), discountedAmount);
+        await batchContract.connect(user1).joinBatchWithDiscount(discountCodeHash);
+
+        // Try to join another batch with same code (after batch 1 fills)
+        const allSigners = await ethers.getSigners();
+        const allUsers = allSigners.slice(2, 26); // Fill batch 1
+        for (let i = 0; i < 23; i++) {
+          await approveAndJoin(allUsers[i]);
+        }
+
+        // Batch 2 should now be current
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), discountedAmount);
+        await expect(
+          batchContract.connect(user1).joinBatchWithDiscount(discountCodeHash)
+        ).to.be.revertedWith("You have already used this discount code");
+      });
+
+      it("Should reject discount code that doesn't apply to deposits", async function () {
+        // Register code only for balance payments
+        const balanceOnlyHash = ethers.keccak256(ethers.toUtf8Bytes("BALANCEONLY"));
+        await batchContract.registerDiscountCode(
+          balanceOnlyHash,
+          percentageDiscount,
+          true,
+          maxUses,
+          false, // doesn't apply to deposits
+          true   // only applies to balance
+        );
+
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), DEPOSIT_AMOUNT);
+        await expect(
+          batchContract.connect(user1).joinBatchWithDiscount(balanceOnlyHash)
+        ).to.be.revertedWith("This code does not apply to deposits");
+      });
+
+      it("Should reject with insufficient USDC allowance", async function () {
+        // Approve less than discounted amount
+        const discountedAmount = (DEPOSIT_AMOUNT * 80n) / 100n;
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), discountedAmount - 1n);
+
+        await expect(
+          batchContract.connect(user1).joinBatchWithDiscount(discountCodeHash)
+        ).to.be.reverted; // ERC20 insufficient allowance
+      });
+    });
+
+    describe("Pay Balance With Discount", function () {
+      const balanceDiscountHash = ethers.keccak256(ethers.toUtf8Bytes("BALANCE15"));
+      const balancePercentageDiscount = 15n; // 15%
+
+      beforeEach(async function () {
+        // Fill and activate batch
+        const allSigners = await ethers.getSigners();
+        const allUsers = allSigners.slice(1, 25);
+        for (let i = 0; i < 24; i++) {
+          await approveAndJoin(allUsers[i]);
+        }
+        await batchContract.transitionBatchState(1, 2, BALANCE_AMOUNT); // Active
+
+        // Register discount code for balance payments
+        await batchContract.registerDiscountCode(
+          balanceDiscountHash,
+          balancePercentageDiscount,
+          true,
+          maxUses,
+          false, // doesn't apply to deposits
+          true   // applies to balance
+        );
+      });
+
+      it("Should allow paying balance with valid discount code", async function () {
+        const discountedAmount = (BALANCE_AMOUNT * 85n) / 100n; // 15% off
+        const discountSaved = BALANCE_AMOUNT - discountedAmount;
+
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), discountedAmount);
+
+        await expect(
+          batchContract.connect(user1).payBalanceWithDiscount(1, balanceDiscountHash)
+        )
+          .to.emit(batchContract, "BalancePaymentReceived")
+          .withArgs(1, user1.address, discountedAmount)
+          .and.to.emit(batchContract, "DiscountCodeUsed")
+          .withArgs(balanceDiscountHash, user1.address, discountSaved, false);
+
+        const participantInfo = await batchContract.getParticipantInfo(1, user1.address);
+        expect(participantInfo.balanceAmount).to.equal(discountedAmount);
+        expect(participantInfo.balancePaid).to.be.true;
+      });
+
+      it("Should reject discount code that doesn't apply to balance", async function () {
+        // Register code only for deposits
+        const depositOnlyHash = ethers.keccak256(ethers.toUtf8Bytes("DEPOSITONLY"));
+        await batchContract.registerDiscountCode(
+          depositOnlyHash,
+          percentageDiscount,
+          true,
+          maxUses,
+          true,  // only applies to deposits
+          false  // doesn't apply to balance
+        );
+
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), BALANCE_AMOUNT);
+        await expect(
+          batchContract.connect(user1).payBalanceWithDiscount(1, depositOnlyHash)
+        ).to.be.revertedWith("This code does not apply to balance payments");
+      });
+
+      it("Should reject inactive discount code", async function () {
+        await batchContract.deactivateDiscountCode(balanceDiscountHash);
+
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), BALANCE_AMOUNT);
+        await expect(
+          batchContract.connect(user1).payBalanceWithDiscount(1, balanceDiscountHash)
+        ).to.be.revertedWith("Discount code is not active");
+      });
+
+      it("Should allow different users to use same discount code", async function () {
+        const discountedAmount = (BALANCE_AMOUNT * 85n) / 100n;
+
+        // User1 uses code
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), discountedAmount);
+        await batchContract.connect(user1).payBalanceWithDiscount(1, balanceDiscountHash);
+
+        // User2 also uses code
+        await usdcToken.connect(user2).approve(await batchContract.getAddress(), discountedAmount);
+        await expect(
+          batchContract.connect(user2).payBalanceWithDiscount(1, balanceDiscountHash)
+        ).to.emit(batchContract, "BalancePaymentReceived");
+
+        // Check remaining uses decremented twice
+        const codeInfo = await batchContract.discountCodes(balanceDiscountHash);
+        expect(codeInfo.remainingUses).to.equal(maxUses - 2);
+      });
+
+      it("Should handle fixed amount discount larger than balance (floor at 0)", async function () {
+        const largeDiscountHash = ethers.keccak256(ethers.toUtf8Bytes("HUGE"));
+        const hugeDiscount = BigInt(100 * 10 ** USDC_DECIMALS); // 100 USDC discount on 75 USDC balance
+
+        await batchContract.registerDiscountCode(
+          largeDiscountHash,
+          hugeDiscount,
+          false, // fixed amount
+          5,
+          false,
+          true
+        );
+
+        // Should result in 0 payment
+        await expect(
+          batchContract.connect(user1).payBalanceWithDiscount(1, largeDiscountHash)
+        )
+          .to.emit(batchContract, "BalancePaymentReceived")
+          .withArgs(1, user1.address, 0n);
+
+        const participantInfo = await batchContract.getParticipantInfo(1, user1.address);
+        expect(participantInfo.balanceAmount).to.equal(0n);
+        expect(participantInfo.balancePaid).to.be.true;
+      });
+    });
+
+    describe("Discount Code Edge Cases", function () {
+      it("Should handle multiple discount codes with same hash collision prevention", async function () {
+        // Two different codes with different hashes
+        const code1Hash = ethers.keccak256(ethers.toUtf8Bytes("CODE1"));
+        const code2Hash = ethers.keccak256(ethers.toUtf8Bytes("CODE2"));
+
+        await batchContract.registerDiscountCode(code1Hash, 10n, true, 5, true, true);
+        await batchContract.registerDiscountCode(code2Hash, 20n, true, 5, true, true);
+
+        const code1Info = await batchContract.discountCodes(code1Hash);
+        const code2Info = await batchContract.discountCodes(code2Hash);
+
+        expect(code1Info.discountValue).to.equal(10n);
+        expect(code2Info.discountValue).to.equal(20n);
+      });
+
+      it("Should track user discount usage independently per code", async function () {
+        const code1Hash = ethers.keccak256(ethers.toUtf8Bytes("CODE1"));
+        const code2Hash = ethers.keccak256(ethers.toUtf8Bytes("CODE2"));
+
+        await batchContract.registerDiscountCode(code1Hash, 10n, true, 5, true, false);
+        await batchContract.registerDiscountCode(code2Hash, 20n, true, 5, true, false);
+
+        // Use CODE1
+        const discount1Amount = (DEPOSIT_AMOUNT * 90n) / 100n;
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), discount1Amount);
+        await batchContract.connect(user1).joinBatchWithDiscount(code1Hash);
+
+        // Should still be able to use CODE2 in a different batch
+        const allSigners = await ethers.getSigners();
+        const allUsers = allSigners.slice(2, 26);
+        for (let i = 0; i < 23; i++) {
+          await approveAndJoin(allUsers[i]);
+        }
+
+        // Batch 2 is now current
+        const discount2Amount = (DEPOSIT_AMOUNT * 80n) / 100n;
+        await usdcToken.connect(user1).approve(await batchContract.getAddress(), discount2Amount);
+        await expect(
+          batchContract.connect(user1).joinBatchWithDiscount(code2Hash)
+        ).to.emit(batchContract, "UserJoined");
+
+        // User1 should have used both codes
+        expect(await batchContract.userUsedDiscount(user1.address, code1Hash)).to.be.true;
+        expect(await batchContract.userUsedDiscount(user1.address, code2Hash)).to.be.true;
+      });
+    });
+  });
 });

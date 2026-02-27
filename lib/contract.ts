@@ -3,7 +3,9 @@ import { ethers } from "ethers";
 // Smart contract ABI (from compiled contracts/BatchStateMachine.sol)
 const BATCH_STATE_MACHINE_ABI = [
   "function joinBatch() external",
+  "function joinBatchWithDiscount(bytes32 discountCodeHash) external",
   "function payBalance(uint256 batchId) external",
+  "function payBalanceWithDiscount(uint256 batchId, bytes32 discountCodeHash) external",
   "function markBalanceAsPaid(uint256 batchId, address user, uint256 balanceAmount) external",
   "function usdcToken() external view returns (address)",
   "function pause() external",
@@ -30,6 +32,10 @@ const BATCH_STATE_MACHINE_ABI = [
   "function withdrawSlashedFunds() external",
   "function slashedFunds() external view returns (uint256)",
   "function removeParticipant(uint256 batchId, address user) external",
+  "function registerDiscountCode(bytes32 codeHash, uint256 discountValue, bool isPercentage, uint256 maxUses, bool appliesToDeposit, bool appliesToBalance) external",
+  "function deactivateDiscountCode(bytes32 codeHash) external",
+  "function discountCodes(bytes32 codeHash) external view returns (uint256 discountValue, bool isPercentage, uint256 remainingUses, bool active, bool appliesToDeposit, bool appliesToBalance)",
+  "function userUsedDiscount(address user, bytes32 codeHash) external view returns (bool)",
   "function owner() external view returns (address)",
   "event BatchCreated(uint256 indexed batchId, uint256 maxBatchSize, uint256 timestamp)",
   "event UserJoined(uint256 indexed batchId, address indexed user, uint256 depositAmount)",
@@ -45,6 +51,9 @@ const BATCH_STATE_MACHINE_ABI = [
   "event ParticipantRemoved(uint256 indexed batchId, address indexed user, uint256 refundAmount, bool balancePaid, bool slashed)",
   "event DepositPriceChanged(uint256 oldPrice, uint256 newPrice)",
   "event BalancePriceSet(uint256 indexed batchId, uint256 balancePrice)",
+  "event DiscountCodeRegistered(bytes32 indexed codeHash, uint256 discountValue, bool isPercentage, uint256 maxUses, bool appliesToDeposit, bool appliesToBalance)",
+  "event DiscountCodeUsed(bytes32 indexed codeHash, address indexed user, uint256 discountAmount, bool forDeposit)",
+  "event DiscountCodeDeactivated(bytes32 indexed codeHash)",
 ];
 
 export enum BatchState {
@@ -547,5 +556,99 @@ export async function getSlashedFunds(): Promise<bigint> {
 export async function withdrawSlashedFunds(signer: ethers.Signer) {
   const contract = getContractWithSigner(signer);
   const tx = await contract.withdrawSlashedFunds();
+  return await tx.wait();
+}
+
+// Discount code functions
+
+/**
+ * Hash a discount code string to bytes32 for on-chain use
+ */
+export function hashDiscountCode(code: string): string {
+  return ethers.keccak256(ethers.toUtf8Bytes(code));
+}
+
+/**
+ * Register a new discount code (admin only)
+ */
+export async function registerDiscountCode(
+  code: string,
+  discountValue: bigint,
+  isPercentage: boolean,
+  maxUses: number,
+  appliesToDeposit: boolean,
+  appliesToBalance: boolean,
+  signer: ethers.Signer
+) {
+  const codeHash = hashDiscountCode(code);
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.registerDiscountCode(
+    codeHash,
+    discountValue,
+    isPercentage,
+    maxUses,
+    appliesToDeposit,
+    appliesToBalance
+  );
+  return await tx.wait();
+}
+
+/**
+ * Deactivate a discount code (admin only)
+ */
+export async function deactivateDiscountCode(code: string, signer: ethers.Signer) {
+  const codeHash = hashDiscountCode(code);
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.deactivateDiscountCode(codeHash);
+  return await tx.wait();
+}
+
+/**
+ * Get discount code info
+ */
+export async function getDiscountCodeInfo(code: string) {
+  const codeHash = hashDiscountCode(code);
+  const contract = getContract();
+  const info = await contract.discountCodes(codeHash);
+  return {
+    discountValue: info.discountValue,
+    isPercentage: info.isPercentage,
+    remainingUses: Number(info.remainingUses),
+    active: info.active,
+    appliesToDeposit: info.appliesToDeposit,
+    appliesToBalance: info.appliesToBalance,
+  };
+}
+
+/**
+ * Check if user has used a discount code
+ */
+export async function hasUserUsedDiscount(userAddress: string, code: string): Promise<boolean> {
+  const codeHash = hashDiscountCode(code);
+  const contract = getContract();
+  return await contract.userUsedDiscount(userAddress, codeHash);
+}
+
+/**
+ * Join batch with discount code
+ */
+export async function joinBatchWithDiscount(code: string, signer: ethers.Signer) {
+  const codeHash = hashDiscountCode(code);
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.joinBatchWithDiscount(codeHash);
+  return await tx.wait();
+}
+
+/**
+ * Pay balance with discount code
+ */
+export async function payBalanceWithDiscount(
+  batchId: number,
+  code: string,
+  signer: ethers.Signer
+) {
+  const codeHash = hashDiscountCode(code);
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.payBalanceWithDiscount(batchId, codeHash);
   return await tx.wait();
 }
