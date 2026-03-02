@@ -32,6 +32,9 @@ const BATCH_STATE_MACHINE_ABI = [
   "function withdrawSlashedFunds() external",
   "function slashedFunds() external view returns (uint256)",
   "function removeParticipant(uint256 batchId, address user) external",
+  "function reclaimDeposit(uint256 batchId) external",
+  "function depositReclaimWindow() external view returns (uint256)",
+  "function setDepositReclaimWindow(uint256 newWindow) external",
   "function registerDiscountCode(bytes32 codeHash, uint256 discountValue, bool isPercentage, uint256 maxUses, bool appliesToDeposit, bool appliesToBalance) external",
   "function deactivateDiscountCode(bytes32 codeHash) external",
   "function discountCodes(bytes32 codeHash) external view returns (uint256 discountValue, bool isPercentage, uint256 remainingUses, bool active, bool appliesToDeposit, bool appliesToBalance)",
@@ -54,6 +57,8 @@ const BATCH_STATE_MACHINE_ABI = [
   "event DiscountCodeRegistered(bytes32 indexed codeHash, uint256 discountValue, bool isPercentage, uint256 maxUses, bool appliesToDeposit, bool appliesToBalance)",
   "event DiscountCodeUsed(bytes32 indexed codeHash, address indexed user, uint256 discountAmount, bool forDeposit)",
   "event DiscountCodeDeactivated(bytes32 indexed codeHash)",
+  "event DepositReclaimed(uint256 indexed batchId, address indexed user, uint256 refundAmount)",
+  "event DepositReclaimWindowChanged(uint256 oldWindow, uint256 newWindow)",
 ];
 
 export enum BatchState {
@@ -439,6 +444,39 @@ export async function removeParticipant(
 ) {
   const contract = getContractWithSigner(signer);
   const tx = await contract.removeParticipant(batchId, userAddress);
+  return await tx.wait();
+}
+
+/**
+ * Reclaim deposit from Pending batch after reclaim window (user callable)
+ */
+export async function reclaimDeposit(
+  batchId: number,
+  signer: ethers.Signer
+) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.reclaimDeposit(batchId);
+  return await tx.wait();
+}
+
+/**
+ * Get deposit reclaim window (in seconds)
+ */
+export async function getDepositReclaimWindow(): Promise<number> {
+  const contract = getContract();
+  const window = await contract.depositReclaimWindow();
+  return Number(window);
+}
+
+/**
+ * Set deposit reclaim window (admin only)
+ */
+export async function setDepositReclaimWindow(
+  newWindow: number,
+  signer: ethers.Signer
+) {
+  const contract = getContractWithSigner(signer);
+  const tx = await contract.setDepositReclaimWindow(newWindow);
   return await tx.wait();
 }
 

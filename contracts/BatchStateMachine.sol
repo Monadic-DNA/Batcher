@@ -73,6 +73,9 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     uint256 public constant PATIENCE_TIMER = 14 days; // 2 week grace period (28 days total)
     uint256 public constant SLASH_PERCENTAGE = 50; // 50% penalty
 
+    // Configurable parameter for deposit reclaim window (default 90 days / 3 months)
+    uint256 public depositReclaimWindow = 90 days;
+
     // Configurable parameters (can be updated by owner)
     uint256 public depositPrice = 25_000000; // 10 USDC deposit (6 decimals)
 
@@ -111,6 +114,8 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     event DiscountCodeRegistered(bytes32 indexed codeHash, uint256 discountValue, bool isPercentage, uint256 maxUses, bool appliesToDeposit, bool appliesToBalance);
     event DiscountCodeUsed(bytes32 indexed codeHash, address indexed user, uint256 discountAmount, bool forDeposit);
     event DiscountCodeDeactivated(bytes32 indexed codeHash);
+    event DepositReclaimed(uint256 indexed batchId, address indexed user, uint256 refundAmount);
+    event DepositReclaimWindowChanged(uint256 oldWindow, uint256 newWindow);
 
     constructor(address _usdcToken) Ownable(msg.sender) {
         require(_usdcToken != address(0), "Invalid USDC address");
@@ -532,6 +537,42 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
+     * @dev Reclaim deposit during Pending stage after reclaim window has passed (user callable)
+     * Users can get their full deposit back if the batch hasn't progressed beyond Pending
+     * and sufficient time has passed since they joined
+     */
+    function reclaimDeposit(uint256 batchId) external nonReentrant whenNotPaused {
+        Batch storage batch = batches[batchId];
+        require(batch.state == BatchState.Pending, "Can only reclaim deposit from Pending batch");
+
+        uint256 index = batch.participantIndex[msg.sender];
+        require(index > 0, "Not a participant in this batch");
+
+        Participant storage participant = batch.participants[index];
+        require(participant.wallet != address(0), "Participant already removed");
+
+        // Check if reclaim window has passed
+        require(
+            block.timestamp >= participant.joinedAt + depositReclaimWindow,
+            "Reclaim window has not passed yet"
+        );
+
+        uint256 refundAmount = participant.depositAmount;
+
+        // Remove participant mapping
+        batch.participantIndex[msg.sender] = 0;
+
+        // Mark as removed and decrement active count
+        participant.wallet = address(0);
+        batch.activeParticipantCount--;
+
+        emit DepositReclaimed(batchId, msg.sender, refundAmount);
+
+        // Refund the participant in USDC
+        usdcToken.safeTransfer(msg.sender, refundAmount);
+    }
+
+    /**
      * @dev Remove participant and refund their payments in USDC (admin only)
      * Can be called at any time before batch is Completed
      *
@@ -790,6 +831,17 @@ contract BatchStateMachine is Ownable, ReentrancyGuard, Pausable {
         code.remainingUses--;
 
         return code.discountValue; // Return for event emission
+    }
+
+    /**
+     * @dev Update deposit reclaim window (admin only)
+     * @param newWindow New time window in seconds (e.g., 90 days)
+     */
+    function setDepositReclaimWindow(uint256 newWindow) external onlyOwner {
+        require(newWindow > 0, "Reclaim window must be greater than 0");
+        uint256 oldWindow = depositReclaimWindow;
+        depositReclaimWindow = newWindow;
+        emit DepositReclaimWindowChanged(oldWindow, newWindow);
     }
 
     /**

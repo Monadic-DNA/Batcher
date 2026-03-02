@@ -9,9 +9,13 @@ interface UserActionsCardProps {
   balancePaid: boolean;
   kitRegistered: boolean;
   resultsAvailable: boolean;
+  canReclaimDeposit?: boolean;
+  joinedAt?: number;
+  depositReclaimWindow?: number;
   onPayBalance?: () => void;
   onRegisterKit?: () => void;
   onDownloadResults?: () => void;
+  onReclaimDeposit?: () => void;
 }
 
 export function UserActionsCard({
@@ -21,10 +25,23 @@ export function UserActionsCard({
   balancePaid,
   kitRegistered,
   resultsAvailable,
+  canReclaimDeposit,
+  joinedAt,
+  depositReclaimWindow,
   onPayBalance,
   onRegisterKit,
   onDownloadResults,
+  onReclaimDeposit,
 }: UserActionsCardProps) {
+
+  // Calculate if reclaim is available
+  const isReclaimAvailable =
+    batchState === "Pending" &&
+    depositPaid &&
+    canReclaimDeposit &&
+    joinedAt &&
+    depositReclaimWindow &&
+    (Date.now() / 1000) >= (joinedAt + depositReclaimWindow);
 
   const steps = [
     {
@@ -61,6 +78,29 @@ export function UserActionsCard({
 
   return (
     <div className="space-y-2">
+      {/* Reclaim Deposit Notice - show when available */}
+      {isReclaimAvailable && onReclaimDeposit && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+          <div className="flex items-start gap-2 mb-2">
+            <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div className="flex-1">
+              <h4 className="text-sm font-semibold text-amber-900">Reclaim Available</h4>
+              <p className="text-xs text-amber-800 mt-1">
+                This batch has been pending for over {Math.floor((depositReclaimWindow || 0) / 86400)} days. You can reclaim your full deposit.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onReclaimDeposit}
+            className="w-full px-4 py-2 text-sm font-medium bg-amber-600 hover:bg-amber-700 text-white rounded transition-colors"
+          >
+            Reclaim Deposit
+          </button>
+        </div>
+      )}
+
       {/* Vertical steps with consistent horizontal layout */}
       {steps.map((step, index) => (
         <div key={index} className="flex items-center justify-between gap-3 py-2">

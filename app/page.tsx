@@ -11,7 +11,8 @@ import { ShippingMetadataModal } from "@/components/modals/ShippingMetadataModal
 import { KitRegistrationModal } from "@/components/modals/KitRegistrationModal";
 import { BalancePaymentModal } from "@/components/modals/BalancePaymentModal";
 import { DataRevealModal } from "@/components/modals/DataRevealModal";
-import { getCurrentBatchId, getBatchInfo, getParticipantInfo, getBatchParticipants } from "@/lib/contract";
+import { ReclaimDepositModal } from "@/components/modals/ReclaimDepositModal";
+import { getCurrentBatchId, getBatchInfo, getParticipantInfo, getBatchParticipants, getDepositReclaimWindow } from "@/lib/contract";
 
 // Helper to get block explorer URL
 const getExplorerUrl = (address: string): string => {
@@ -47,7 +48,9 @@ export default function Home() {
   const [isKitRegistrationModalOpen, setIsKitRegistrationModalOpen] = useState(false);
   const [isBalancePaymentModalOpen, setIsBalancePaymentModalOpen] = useState(false);
   const [isDataRevealModalOpen, setIsDataRevealModalOpen] = useState(false);
+  const [isReclaimDepositModalOpen, setIsReclaimDepositModalOpen] = useState(false);
   const [userKitId, setUserKitId] = useState<string>("");
+  const [depositReclaimWindow, setDepositReclaimWindow] = useState<number>(90 * 24 * 60 * 60); // Default 90 days in seconds
 
   // Initialize Dynamic on component mount
   useEffect(() => {
@@ -98,6 +101,16 @@ export default function Home() {
   const fetchBatchData = useCallback(async () => {
       try {
         setLoadingContractData(true);
+
+        // Fetch deposit reclaim window
+        try {
+          const reclaimWindow = await getDepositReclaimWindow();
+          setDepositReclaimWindow(reclaimWindow);
+        } catch (err) {
+          console.error("Failed to fetch deposit reclaim window:", err);
+          // Keep default value
+        }
+
         const batchId = await getCurrentBatchId();
         setCurrentBatchId(batchId);
 
@@ -609,9 +622,13 @@ export default function Home() {
                             participantInfo?.commitmentHash !== "0x0000000000000000000000000000000000000000000000000000000000000000")
                           }
                           resultsAvailable={selectedBatch.batchState === "Completed" || selectedBatch.batchState === "Purged"}
+                          canReclaimDeposit={selectedBatch.batchState === "Pending"}
+                          joinedAt={participantInfo?.joinedAt}
+                          depositReclaimWindow={depositReclaimWindow}
                           onPayBalance={() => setIsBalancePaymentModalOpen(true)}
                           onRegisterKit={() => setIsKitRegistrationModalOpen(true)}
                           onDownloadResults={() => setIsDataRevealModalOpen(true)}
+                          onReclaimDeposit={() => setIsReclaimDepositModalOpen(true)}
                         />
                       ) : (
                         <div className="text-center py-8">
@@ -834,6 +851,21 @@ export default function Home() {
             batchId={selectedUserBatchId || currentBatchId}
             kitId={userKitId || "Unknown"}
           />
+
+          {participantInfo && (
+            <ReclaimDepositModal
+              isOpen={isReclaimDepositModalOpen}
+              onClose={() => setIsReclaimDepositModalOpen(false)}
+              onReclaimSuccess={() => {
+                refreshBatch();
+                fetchBatchData();
+              }}
+              batchId={selectedUserBatchId || currentBatchId}
+              depositAmount={Number(participantInfo.depositAmount) / 1e6}
+              joinedAt={participantInfo.joinedAt}
+              depositReclaimWindow={depositReclaimWindow}
+            />
+          )}
         </>
       )}
     </main>
